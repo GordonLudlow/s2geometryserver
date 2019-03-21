@@ -599,7 +599,7 @@ void GenerateCover(int socket, map<string,string> const & params) {
         cellDelimiter = ",";
         S2Cell cell(id);
         string delimeter("");
-        result += "[";
+        result += string("{\"name\": \"") + id.ToToken() + "\",\"points\":[";
         for (int i=0; i<4; i++) {
             S2LatLng point(cell.GetVertex(i));
             result += delimeter 
@@ -610,7 +610,7 @@ void GenerateCover(int socket, map<string,string> const & params) {
                     + "}"; 
             delimeter = ",";
         }
-        result += "]";
+        result += "]}";
     }
     //result += "]}";
     result += "]";

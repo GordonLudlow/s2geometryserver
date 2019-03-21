@@ -31,13 +31,37 @@ function drawS2Grid() {
     s2polygons = [];
     for (let i=0;i<s2data.length;i++){
         s2polygons.push(new google.maps.Polygon({
-            path: s2data[i],
+            path: s2data[i].points,
             strokeColor: '#0000FF',
             strokeOpacity: 0.5,
             strokeWeight: 1,
             fillOpacity: 0,
             map: map
         }));
+    }
+    console.log("Cell count: " + s2data.length);
+    if (s2data.length < 100) {
+        for (let i=0;i<s2data.length;i++){
+            let lat = 0;
+            let lng = 0;
+            for (let point in s2data[i].points) {
+                lat += s2data[i].points[point].lat;
+                lng += s2data[i].points[point].lng;                
+            }
+            lat /= s2data[i].points.length;
+            lng /= s2data[i].points.length;
+            s2polygons.push(new google.maps.Marker({
+                position: new google.maps.LatLng(lat,lng),
+                map: map,
+                icon: "/images/transparent.png",
+                label: {
+                    text: s2data[i].name,
+                    color: "blue",
+                    fontWeight: "bold",
+                    fontSize: "16px"
+                }
+            }));
+        }
     }
 }
 
