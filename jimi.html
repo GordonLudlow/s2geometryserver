@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<title>Max Mu Portal Entry</title>
+<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+<style type="text/css">
+html { height: 100%; }
+body { height: 100%; margin: 0; padding: 0; }
+.container {display: flex; height: 100%; flex-direction: column;}
+#map_canvas {width:100%; height:90%; min-height: 200px;}
+#border {width: 100%; height: 1%; min-height: 5px; background-color: #0078B5; cursor: ns-resize;}
+#results {width:100%; height:0%; overflow:auto; min-height: 0px;}
+#slider {width: 50%; overflow:auto;}
+ul.no_bullet {list-style-type: none; padding: 0; margin: 0; }
+li.checked {background: url('./images/checked.png') no-repeat left top; padding-left: 36px; padding-top: 4px; line-height: 1.5em; height:auto}
+li.unchecked {background: url('./images/unchecked.png') no-repeat left top; padding-left: 36px; padding-top: 4px; line-height: 1.5em; height:auto}
+</style>
+
+<script type="text/javascript">
+
+var map;
+var mapInitialized = false;
+var s2data = {};
+var s2polygons = [];
+
+function drawS2Grid() {
+    for (let i=0; i<s2polygons.length; i++){
+        s2polygons[i].setMap(null);
+    }
+    s2polygons = [];
+    for (let i=0;i<s2data.length;i++){
+        s2polygons.push(new google.maps.Polygon({
+            path: s2data[i],
+            strokeColor: '#0000FF',
+            strokeOpacity: 0.5,
+            strokeWeight: 1,
+            fillOpacity: 0,
+            map: map
+        }));
+    }
+}
+
+function refreshS2Grid(level) {
+    let bounds = map.getBounds();
+    let ne = bounds.getNorthEast();
+    let sw = bounds.getSouthWest();
+    let rectPoints = ne.lat().toString() + "," + ne.lng().toString()
+                + "_" + ne.lat().toString() + "," + sw.lng().toString()
+                + "_" + sw.lat().toString() + "," + ne.lng().toString()
+                + "_" + sw.lat().toString() + "," + sw.lng().toString();
+    $.ajax({
+        url:"http://localhost:5000/cover?minLevel=" 
+            + level 
+            + "&maxLevel="
+            + level
+            + "&rectpoints="
+            + rectPoints,
+        success:function(data){
+            $("#s2cellLevel").val(level);
+            s2data = JSON.parse(data);
+            drawS2Grid();
+        },
+        error:function(jqXHR, textStatus, errorThrown) {
+            if (jqXHR.status == 403) {
+                // Clear the drawn cells
+                for (let i=0; i<s2polygons.length; i++){
+                    s2polygons[i].setMap(null);
+                }
+                s2polygons = [];
+                // Inform the user they're too zoomed out to draw the cells at the requested level
+                $("#s2cellLevel").val(level + " (zoom in)");
+            }
+            else {
+                console.log('getJSON request failed! ' + textStatus);
+                console.log("incoming Text " + jqXHR.responseText);
+            }
+        }      
+    });                         
+}
+
+function initializeMap()
+{
+    if (!mapInitialized)
+    {
+        // Default map options
+        var mapOptions = { center: new google.maps.LatLng(47.488451,-122.169666),
+                            zoom: 10,
+                            mapTypeId: google.maps.MapTypeId.ROADMAP };
+        
+        map = new google.maps.Map(document.getElementById("map_canvas"), mapOptions);
+        mapInitialized=true;
+        
+        let portals = [
+{
+"title": "All to Myself I Think of You Memorial",
+"guid": "72366c69a9004a1c8086ea65217c3b08.16",
+"latlng": "47.486764,-122.170208"
+},
+{
+"title": "Little Free Library At Heritage Park",
+"guid": "d42bb777c7dc43c2b52ef3d9e3981be9.16",
+"latlng": "47.485808,-122.166327"
+},
+{
+"title": "Garden of Friends Bench",
+"guid": "f1c552ce6d9448519f7184f77a16b470.16",
+"latlng": "47.488083,-122.169903"
+},
+{
+"title": "Basketball Half-Court At Heritage Park",
+"guid": "debe044ba71f403292c9975d373e65ce.16",
+"latlng": "47.486303,-122.164632"
+},
+{
+"title": "Cedar View Memorial",
+"guid": "cd2f34d0a9d14319a4009265c0270b6e.16",
+"latlng": "47.488451,-122.169666"
+},
+{
+"title": "Sempre nel nostro cuore..Con amure bench",
+"guid": "c89f546ac11c4117ace1017557b6af69.16",
+"latlng": "47.487944,-122.170096"
+},
+{
+"title": "Renton Aerie No 1722 F.O.E.",
+"guid": "c27f113e47a14941bee221b37a2341ca.16",
+"latlng": "47.488222,-122.171616"
+},
+{
+"title": "Greenwood Memorial Geometrical Fountain ",
+"guid": "0e97ad3a95da44938898eef25f733a7d.16",
+"latlng": "47.487722,-122.170559"
+},
+{
+"title": "East Memorial Wall",
+"guid": "73fcb6a9a4384778931aafb5ae1f9f4c.16",
+"latlng": "47.488078,-122.169664"
+}
+            /*
+            {
+                "title": "Lullabyland Memorial",
+                "guid": "8bd8aa38bdf24d5d9486420edea7f678.16",
+                "latlng": "47.486297,-122.172124"
+            },
+            {
+                "title": "All to Myself I Think of You Memorial",
+                "guid": "72366c69a9004a1c8086ea65217c3b08.16",
+                "latlng": "47.486764,-122.170208"
+            },
+            {
+                "title": "Garden of Harmony",
+                "guid": "fa67200b17c34a38a17b50a6f9c90453.16",
+                "latlng": "47.486712,-122.173687"
+            },
+            {
+                "title": "Metamorphosis",
+                "guid": "1caf28a8dc7040f0bd5ae272b153255b.16",
+                "latlng": "47.48793,-122.173166"
+            },
+            {
+                "title": "Time Enough",
+                "guid": "bf099bc0367a4b508691ae6aafdc5eb5.16",
+                "latlng": "47.486537,-122.174261"
+            },
+            {
+                "title": "Iu-Mienh Community Memorial ",
+                "guid": "b130f28bc5634c45a0405680e35c25d7.16",
+                "latlng": "47.48535,-122.174513"
+            },
+            {
+                "title": "Sempre nel nostro cuore..Con amure bench",
+                "guid": "c89f546ac11c4117ace1017557b6af69.16",
+                "latlng": "47.487944,-122.170096"
+            },
+            {
+                "title": "Renton Aerie No 1722 F.O.E.",
+                "guid": "c27f113e47a14941bee221b37a2341ca.16",
+                "latlng": "47.488222,-122.171616"
+            },
+            {
+                "title": "Memories Fountain",
+                "guid": "c23d58817f454ce2aef0dd95945b641d.16",
+                "latlng": "47.485701,-122.172339"
+            },
+            {
+                "title": "Yeah Yeah Thanks Puddin",
+                "guid": "7cd14f47dc4a41d5bff70174c4b96b28.16",
+                "latlng": "47.488086,-122.174574"
+            },
+            {
+                "title": "Love Forever Headstone",
+                "guid": "df1e0ae4843e4221ac301331aedfb129.16",
+                "latlng": "47.48752,-122.172903"
+            },
+            {
+                "title": "Hurricane Katrina Memorial",
+                "guid": "c2b32b1c9a944701bc57c9ad155c52bf.16",
+                "latlng": "47.485937,-122.17432"
+            },
+            {
+                "title": "Greenwood Memorial Geometrical Fountain ",
+                "guid": "0e97ad3a95da44938898eef25f733a7d.16",
+                "latlng": "47.487722,-122.170559"
+            },
+            {
+                "title": "Sun Dial",
+                "guid": "721500f064644c69847c8f2f86cf0bcf.16",
+                "latlng": "47.486194,-122.171397"
+            },
+            {
+                "title": "East Memorial Wall",
+                "guid": "73fcb6a9a4384778931aafb5ae1f9f4c.16",
+                "latlng": "47.488078,-122.169664"
+            },
+            {
+                "title": "Garden of Friends Bench",
+                "guid": "f1c552ce6d9448519f7184f77a16b470.16",
+                "latlng": "47.488083,-122.169903"
+            },
+            {
+                "title": "Jimi Hendrix Memorial",
+                "guid": "8bc08af55f64419bb099d826550d1beb.12",
+                "latlng": "47.486514,-122.173947"
+            },
+            {
+                "title": "Pastor Lee Arthur Dennis Memorial Bench",
+                "guid": "49ca64d3a78c46eb93199d07dc7f443b.16",
+                "latlng": "47.486706,-122.172068"
+            },
+            {
+                "title": "Together Forever Bench",
+                "guid": "a84d9b260e4f4509ab8c1efa16c57500.16",
+                "latlng": "47.48524,-122.171777"
+            },
+            {
+                "title": "Garden of Eternal Peace Pagoda",
+                "guid": "2327a393e34a4b1aa0914f1182b27f24.16",
+                "latlng": "47.48619,-122.174287"
+            },
+            {
+                "title": "Remembered Forever",
+                "guid": "17cbb13c1e0f4db6be88538fdcd58d36.16",
+                "latlng": "47.487686,-122.173709"
+            },
+            {
+                "title": "Fountain of Youth",
+                "guid": "572e008622d745f38999d5402801fc6c.16",
+                "latlng": "47.486378,-122.174457"
+            },
+            {
+                "title": "Fish Fountain",
+                "guid": "b0912bc0b68049e4892b08e03897c002.16",
+                "latlng": "47.486199,-122.173564"
+            },
+            {
+                "title": "Vietnamese National Feature Columbarium",
+                "guid": "2a1330a3d29e4e3798fa836432471f0e.16",
+                "latlng": "47.485744,-122.174095"
+            },
+            {
+                "title": "Forever Together Memorial",
+                "guid": "a3f3ef644cc241a590824bfb904c3f77.16",
+                "latlng": "47.486846,-122.172553"
+            },
+            {
+                "title": "Dragon Fountain",
+                "guid": "3057b4738a3443b49d115229ef90d1cf.16",
+                "latlng": "47.485676,-122.173525"
+            },
+            {
+                "title": "Memorial Fountain",
+                "guid": "4a2ffcfa3af142bdaac3e50036ebd740.16",
+                "latlng": "47.486942,-122.171348"
+            },
+            {
+                "title": "Gazebo Memorial",
+                "guid": "39b6e55744c84b7cad9cb1e920532400.16",
+                "latlng": "47.487901,-122.173749"
+            },
+            {
+                "title": "Neoclassic Pillar",
+                "guid": "be836c86ca2c4031949afc21c62bd153.16",
+                "latlng": "47.488107,-122.172259"
+            },
+            {
+                "title": "Yui-Mien Community of Washington",
+                "guid": "52db81fef66a4775a98665aa234fb3f2.16",
+                "latlng": "47.487657,-122.172384"
+            },
+            {
+                "title": "South Lawn Memorial",
+                "guid": "44223eeb69b74293aad74abd2a6086c4.16",
+                "latlng": "47.485165,-122.172433"
+            },
+            {
+                "title": "Prisoner of War Memorial",
+                "guid": "1ef0630e7f3644989e0a2bd6027b840f.16",
+                "latlng": "47.486325,-122.172827"
+            },
+            {
+                "title": "Cedar View Memorial",
+                "guid": "cd2f34d0a9d14319a4009265c0270b6e.16",
+                "latlng": "47.488451,-122.169666"
+            }
+            */
+            ];
+        
+//p1 https://intel.ingress.com/intel?ll=47.486764,-122.171799&z=17&pll=47.48793,-122.173166
+//p2 https://intel.ingress.com/intel?ll=47.486764,-122.171799&z=17&pll=47.488078,-122.169664
+//p3 https://intel.ingress.com/intel?ll=47.486764,-122.171799&z=17&pll=47.486942,-122.171348
+//p4 https://intel.ingress.com/intel?ll=47.486764,-122.171799&z=17&pll=47.485165,-122.172433
+//p5 https://intel.ingress.com/intel?ll=47.486764,-122.171799&z=17&pll=47.486514,-122.173947
+        
+        let results = "\tArea\tMU\n";
+        
+        let portalCount = portals.length;
+        for (let i=0; i<portalCount; i++) {
+            let latlngArray = portals[i].latlng.split(',');
+            let lat = parseFloat(latlngArray[0]);
+            let lng = parseFloat(latlngArray[1]);
+            portals[i].googleLatLng = new google.maps.LatLng(lat, lng);
+        }
+        for (let i=0; i<portalCount - 2; i++) {
+            for (let j=i+1; j<portalCount -1 ; j++) {
+                for (let k=j+1; k<portalCount; k++) {
+
+                    let triangle = [
+                        portals[i].googleLatLng,
+                        portals[j].googleLatLng,
+                        portals[k].googleLatLng
+                    ];
+                    results += portals[i].title + " - "  + portals[j].title + " - " + portals[k].title + "\t";
+                    results += google.maps.geometry.spherical.computeArea(triangle) + "\t\n";
+                }
+            }
+        }
+        console.log(results);
+        
+        //let triangle = [new google.maps.LatLng(47.48793,-122.173166),
+        //                new google.maps.LatLng(47.488078,-122.169664),
+        //                new google.maps.LatLng(47.486514,-122.173947)];
+        //let area = google.maps.geometry.spherical.computeArea(triangle);
+        //console.log(area);
+        
+        $("#slider").slider({min:12, max:16, slide: function(event, ui) {
+            refreshS2Grid(ui.value);
+        }});
+        $("#s2cellLevel").val($("#slider").slider("value"));
+        
+        
+        new google.maps.Polygon({
+            path: [{"lat":47.994058,"lng":-122.242468},{"lat":47.430873,"lng":-123.977276},{"lat":46.457519,"lng":-122.693956},{"lat":46.984342,"lng":-120.994610}],
+            strokeColor: '#0000FF',
+            strokeOpacity: 0.5,
+            strokeWeight: 1,
+            fillOpacity: 0,
+            map: map
+        });
+        
+
+        $.getJSON('portals.json', function (data) {
+            for (let i=0; i<data.portals.length; i++) {
+                let latlngArray = data.portals[i].latlng.split(',');
+                let lat = parseFloat(latlngArray[0]);
+                let lng = parseFloat(latlngArray[1]);
+                
+                data.portals[i].lat = lat;
+                data.portals[i].lng = lng;
+                let name = data.portals[i].title + " " + data.portals[i].latlng;
+                
+                let marker = new google.maps.Marker({
+                    position: new google.maps.LatLng(lat, lng),
+                    map: map,
+                    icon: {url: './images/hum_reso_08.png', scaledSize: new google.maps.Size(20, 20), anchor: new google.maps.Point(10,10)},
+                    title: name
+                });
+            }
+        });
+
+        let fieldNames = [
+            "East Memorial Wall - Memorial Fountain - South Lawn Memorial",
+            "All to Myself I Think of You Memorial - Renton Aerie No 1722 F.O.E. - Sun Dial",
+            "Metamorphosis - East Memorial Wall - South Lawn Memorial",
+            "Lullabyland Memorial - Renton Aerie No 1722 F.O.E. - Love Forever Headstone",
+            "Lullabyland Memorial - Renton Aerie No 1722 F.O.E. - Sun Dial",
+            "All to Myself I Think of You Memorial - Renton Aerie No 1722 F.O.E. - Cedar View Memorial",
+            "Love Forever Headstone - Fish Fountain - Prisoner of War Memorial",
+            "Yeah Yeah Thanks Puddin - Remembered Forever - Fountain of Youth",
+            "Metamorphosis - Jimi Hendrix Memorial - South Lawn Memorial",
+            "Garden of Harmony - Love Forever Headstone - Fish Fountain",
+            "Garden of Harmony - Remembered Forever - Fountain of Youth",
+            "Iu-Mienh Community Memorial  - Fish Fountain - Prisoner of War Memorial",
+            "Metamorphosis - Memorial Fountain - South Lawn Memorial",
+            "Garden of Harmony - Iu-Mienh Community Memorial  - Fountain of Youth",
+            "Iu-Mienh Community Memorial  - South Lawn Memorial - Prisoner of War Memorial",
+            "Garden of Harmony - Love Forever Headstone - Remembered Forever",
+            "Lullabyland Memorial - South Lawn Memorial - Prisoner of War Memorial",
+            "Lullabyland Memorial - Love Forever Headstone - Prisoner of War Memorial",
+            "Lullabyland Memorial - Sun Dial - South Lawn Memorial",
+            "Garden of Harmony - Iu-Mienh Community Memorial  - Fish Fountain"
+        ];
+        let bothCells = [
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.487022,lng:-122.170667}),
+                    new google.maps.LatLng({lat:47.487227,lng:-122.170926}),
+                    new google.maps.LatLng({lat:47.486942,lng:-122.171348}),
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433}),
+                    new google.maps.LatLng({lat:47.487022,lng:-122.170667})
+                ],
+                intersect549067df:[
+                    new google.maps.LatLng({lat:47.488078,lng:-122.169664}),
+                    new google.maps.LatLng({lat:47.487227,lng:-122.170926}),
+                    new google.maps.LatLng({lat:47.487022,lng:-122.170667}),
+                    new google.maps.LatLng({lat:47.488078,lng:-122.169664})
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486724,lng:-122.170291}),
+                    new google.maps.LatLng({lat:47.487732,lng:-122.171563}),
+                    new google.maps.LatLng({lat:47.486194,lng:-122.171397}),
+                    new google.maps.LatLng({lat:47.486724,lng:-122.170291})
+                ],
+                intersect549067df:[
+                    new google.maps.LatLng({lat:47.486764,lng:-122.170208}),
+                    new google.maps.LatLng({lat:47.488222,lng:-122.171616}),
+                    new google.maps.LatLng({lat:47.487732,lng:-122.171563}),
+                    new google.maps.LatLng({lat:47.486724,lng:-122.170291}),
+                    new google.maps.LatLng({lat:47.486764,lng:-122.170208})
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433}),
+                    new google.maps.LatLng({lat:47.487022,lng:-122.170667}),
+                    new google.maps.LatLng({lat:47.487984,lng:-122.171882}),
+                    new google.maps.LatLng({lat:47.487930,lng:-122.173166}),
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433})
+                ],
+                intersect549067df:[
+                    new google.maps.LatLng({lat:47.487984,lng:-122.171882}),
+                    new google.maps.LatLng({lat:47.487022,lng:-122.170667}),
+                    new google.maps.LatLng({lat:47.488078,lng:-122.169664}),
+                    new google.maps.LatLng({lat:47.487984,lng:-122.171882})
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486297,lng:-122.172124}),
+                    new google.maps.LatLng({lat:47.487851,lng:-122.171714}),
+                    new google.maps.LatLng({lat:47.488039,lng:-122.171951}),
+                    new google.maps.LatLng({lat:47.487520,lng:-122.172903}),
+                    new google.maps.LatLng({lat:47.486297,lng:-122.172124})
+                ],
+                intersect549067df:[
+                    new google.maps.LatLng({lat:47.488039,lng:-122.171951}),
+                    new google.maps.LatLng({lat:47.487851,lng:-122.171714}),
+                    new google.maps.LatLng({lat:47.488222,lng:-122.171616}),
+                    new google.maps.LatLng({lat:47.488039,lng:-122.171951})
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486194,lng:-122.171397}),
+                    new google.maps.LatLng({lat:47.487732,lng:-122.171563}),
+                    new google.maps.LatLng({lat:47.487851,lng:-122.171714}),
+                    new google.maps.LatLng({lat:47.486297,lng:-122.172124}),
+                    new google.maps.LatLng({lat:47.486194,lng:-122.171397})
+                ],
+                intersect549067df:[
+                    new google.maps.LatLng({lat:47.487851,lng:-122.171714}),
+                    new google.maps.LatLng({lat:47.487732,lng:-122.171563}),
+                    new google.maps.LatLng({lat:47.488222,lng:-122.171616}),
+                    new google.maps.LatLng({lat:47.487851,lng:-122.171714})
+                ]
+            },
+            {
+                intersect549067e1:[
+
+                ],
+                intersect549067df:[
+                    new google.maps.LatLng({lat:47.488451,lng:-122.169666}),
+                    new google.maps.LatLng({lat:47.488222,lng:-122.171616}),
+                    new google.maps.LatLng({lat:47.486764,lng:-122.170208}),
+                    new google.maps.LatLng({lat:47.488451,lng:-122.169666})
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.487520,lng:-122.172903}),
+                    new google.maps.LatLng({lat:47.486199,lng:-122.173564}),
+                    new google.maps.LatLng({lat:47.486325,lng:-122.172827}),
+                    new google.maps.LatLng({lat:47.487520,lng:-122.172903})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486378,lng:-122.174457}),
+                    new google.maps.LatLng({lat:47.487686,lng:-122.173709}),
+                    new google.maps.LatLng({lat:47.488086,lng:-122.174574}),
+                    new google.maps.LatLng({lat:47.486378,lng:-122.174457})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.487930,lng:-122.173166}),
+                    new google.maps.LatLng({lat:47.486514,lng:-122.173947}),
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433}),
+                    new google.maps.LatLng({lat:47.487930,lng:-122.173166})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486199,lng:-122.173564}),
+                    new google.maps.LatLng({lat:47.487520,lng:-122.172903}),
+                    new google.maps.LatLng({lat:47.486712,lng:-122.173687}),
+                    new google.maps.LatLng({lat:47.486199,lng:-122.173564})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486712,lng:-122.173687}),
+                    new google.maps.LatLng({lat:47.487686,lng:-122.173709}),
+                    new google.maps.LatLng({lat:47.486378,lng:-122.174457}),
+                    new google.maps.LatLng({lat:47.486712,lng:-122.173687})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486325,lng:-122.172827}),
+                    new google.maps.LatLng({lat:47.486199,lng:-122.173564}),
+                    new google.maps.LatLng({lat:47.485350,lng:-122.174513}),
+                    new google.maps.LatLng({lat:47.486325,lng:-122.172827})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433}),
+                    new google.maps.LatLng({lat:47.486942,lng:-122.171348}),
+                    new google.maps.LatLng({lat:47.487930,lng:-122.173166}),
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486378,lng:-122.174457}),
+                    new google.maps.LatLng({lat:47.485350,lng:-122.174513}),
+                    new google.maps.LatLng({lat:47.486712,lng:-122.173687}),
+                    new google.maps.LatLng({lat:47.486378,lng:-122.174457})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.485350,lng:-122.174513}),
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433}),
+                    new google.maps.LatLng({lat:47.486325,lng:-122.172827}),
+                    new google.maps.LatLng({lat:47.485350,lng:-122.174513})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486712,lng:-122.173687}),
+                    new google.maps.LatLng({lat:47.487520,lng:-122.172903}),
+                    new google.maps.LatLng({lat:47.487686,lng:-122.173709}),
+                    new google.maps.LatLng({lat:47.486712,lng:-122.173687})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486325,lng:-122.172827}),
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433}),
+                    new google.maps.LatLng({lat:47.486297,lng:-122.172124}),
+                    new google.maps.LatLng({lat:47.486325,lng:-122.172827})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486297,lng:-122.172124}),
+                    new google.maps.LatLng({lat:47.487520,lng:-122.172903}),
+                    new google.maps.LatLng({lat:47.486325,lng:-122.172827}),
+                    new google.maps.LatLng({lat:47.486297,lng:-122.172124})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433}),
+                    new google.maps.LatLng({lat:47.486194,lng:-122.171397}),
+                    new google.maps.LatLng({lat:47.486297,lng:-122.172124}),
+                    new google.maps.LatLng({lat:47.485165,lng:-122.172433})
+                ],
+                intersect549067df:[
+
+                ]
+            },
+            {
+                intersect549067e1:[
+                    new google.maps.LatLng({lat:47.486712,lng:-122.173687}),
+                    new google.maps.LatLng({lat:47.485350,lng:-122.174513}),
+                    new google.maps.LatLng({lat:47.486199,lng:-122.173564}),
+                    new google.maps.LatLng({lat:47.486712,lng:-122.173687})
+                ],
+                intersect549067df:[
+
+                ]
+            }          
+        ];
+
+        let result="";
+        for (let b=0; b < bothCells.length; b++) {
+            // Metamorphosis - East Memorial Wall - Memorial Fountain
+            // Intersection with 549067e1 in the south west:
+            //let polygon = [
+            //    new google.maps.LatLng({lat:47.486942,lng:-122.171348}),
+            //    new google.maps.LatLng({"lat":47.487227,"lng":-122.170926}),
+            //    new google.maps.LatLng({"lat":47.487984,"lng":-122.171882}),
+            //    new google.maps.LatLng({"lat":47.487930,"lng":-122.173166}),
+            //    new google.maps.LatLng({"lat":47.486942,"lng":-122.171348})
+            //];
+            let polygon = bothCells[b].intersect549067e1;
+            console.log("Area of " + fieldNames[b] + " intersected with 549067e1");
+            console.log(google.maps.geometry.spherical.computeArea(polygon) + "\n");
+            result += google.maps.geometry.spherical.computeArea(polygon) + "\t";
+
+            // Intersection with 549067df in the north east:
+            //polygon = [
+            //    new google.maps.LatLng({"lat":47.487984,"lng":-122.171882}),
+            //    new google.maps.LatLng({"lat":47.487227,"lng":-122.170926}),
+            //    new google.maps.LatLng({"lat":47.488078,"lng":-122.169664}),
+            //    new google.maps.LatLng({"lat":47.487984,"lng":-122.171882})
+            //];
+            polygon = bothCells[b].intersect549067df;
+            console.log("Area of " + fieldNames[b] + " intersected 549067df");
+            console.log(google.maps.geometry.spherical.computeArea(polygon) + "\n");
+            result += google.maps.geometry.spherical.computeArea(polygon) + "\n";
+        }
+        console.log("Paste into Excel:");
+        console.log(result);
+
+        $.ajax({
+    // cells cellID_cellID_... 
+    // fields lat,lng_lat,lng_lat,lng-lat,lng_lat,lng_lat,lng-...            
+            url:"http://localhost:5000/intersect?cells=549067e1_549067df&fields=" + 
+                // East Memorial Wall - Memorial Fountain - South Lawn Memorial
+                "47.488078,-122.169664_47.486942,-122.171348_47.485165,-122.172433+" +
+                //All to Myself I Think of You Memorial - Renton Aerie No 1722 F.O.E. - Sun Dial
+                "47.486764,-122.170208_47.488222,-122.171616_47.486194,-122.171397+" +
+                //Metamorphosis - East Memorial Wall - South Lawn Memorial
+                "47.48793,-122.173166_47.488078,-122.169664_47.485165,-122.172433+" +
+                //Lullabyland Memorial - Renton Aerie No 1722 F.O.E. - Love Forever Headstone
+                "47.486297,-122.172124_47.488222,-122.171616_47.48752,-122.172903+" +
+                //Lullabyland Memorial - Renton Aerie No 1722 F.O.E. - Sun Dial
+                "47.486297,-122.172124_47.488222,-122.171616_47.486194,-122.171397+" +
+                //All to Myself I Think of You Memorial - Renton Aerie No 1722 F.O.E. - Cedar View Memorial
+                "47.486764,-122.170208_47.488222,-122.171616_47.488451,-122.169666+" +
+                //Love Forever Headstone - Fish Fountain - Prisoner of War Memorial
+                "47.48752,-122.172903_47.486199,-122.173564_47.486325,-122.172827+" +
+                //Yeah Yeah Thanks Puddin - Remembered Forever - Fountain of Youth
+                "47.488086,-122.174574_47.487686,-122.173709_47.486378,-122.174457+" +
+                //Metamorphosis - Jimi Hendrix Memorial - South Lawn Memorial
+                "47.48793,-122.173166_47.486514,-122.173947_47.485165,-122.172433+" +
+                //Garden of Harmony - Love Forever Headstone - Fish Fountain
+                "47.486712,-122.173687_47.48752,-122.172903_47.486199,-122.173564+" +
+                //Garden of Harmony - Remembered Forever - Fountain of Youth
+                "47.486712,-122.173687_47.487686,-122.173709_47.486378,-122.174457+" +
+                //Iu-Mienh Community Memorial  - Fish Fountain - Prisoner of War Memorial
+                "47.48535,-122.174513_47.486199,-122.173564_47.486325,-122.172827+" +
+                //Metamorphosis - Memorial Fountain - South Lawn Memorial
+                "47.48793,-122.173166_47.486942,-122.171348_47.485165,-122.172433+" +
+                //Garden of Harmony - Iu-Mienh Community Memorial  - Fountain of Youth
+                "47.486712,-122.173687_47.48535,-122.174513_47.486378,-122.174457+" +
+                //Iu-Mienh Community Memorial  - South Lawn Memorial - Prisoner of War Memorial
+                "47.48535,-122.174513_47.485165,-122.172433_47.486325,-122.172827+" +
+                //Garden of Harmony - Love Forever Headstone - Remembered Forever
+                "47.486712,-122.173687_47.48752,-122.172903_47.487686,-122.173709+" +
+                //Lullabyland Memorial - South Lawn Memorial - Prisoner of War Memorial
+                "47.486297,-122.172124_47.485165,-122.172433_47.486325,-122.172827+" +
+                //Lullabyland Memorial - Love Forever Headstone - Prisoner of War Memorial
+                "47.486297,-122.172124_47.48752,-122.172903_47.486325,-122.172827+" +
+                //Lullabyland Memorial - Sun Dial - South Lawn Memorial
+                "47.486297,-122.172124_47.486194,-122.171397_47.485165,-122.172433+" +
+                //Garden of Harmony - Iu-Mienh Community Memorial  - Fish Fountain
+                "47.486712,-122.173687_47.48535,-122.174513_47.486199,-122.173564"
+            ,
+            success:function(data){
+                //console.log(data); // need to format for Excel
+                let intersections = JSON.parse(data);
+                let result="";
+                for (let b=0; b < fieldNames.length; b++) {
+                    // Metamorphosis - East Memorial Wall - Memorial Fountain
+                    // Intersection with 549067e1 in the south west:
+                    //let polygon = [
+                    //    new google.maps.LatLng({lat:47.486942,lng:-122.171348}),
+                    //    new google.maps.LatLng({"lat":47.487227,"lng":-122.170926}),
+                    //    new google.maps.LatLng({"lat":47.487984,"lng":-122.171882}),
+                    //    new google.maps.LatLng({"lat":47.487930,"lng":-122.173166}),
+                    //    new google.maps.LatLng({"lat":47.486942,"lng":-122.171348})
+                    //];
+                    let polygon = intersections["549067e1"][b].map(x => new google.maps.LatLng(x));
+                    console.log(polygon);                    
+                    console.log("Area of " + fieldNames[b] + " intersected with 549067e1");
+                    console.log(google.maps.geometry.spherical.computeArea(polygon) + "\n");
+                    result += google.maps.geometry.spherical.computeArea(polygon) + "\t";
+
+                    // Intersection with 549067df in the north east:
+                    //polygon = [
+                    //    new google.maps.LatLng({"lat":47.487984,"lng":-122.171882}),
+                    //    new google.maps.LatLng({"lat":47.487227,"lng":-122.170926}),
+                    //    new google.maps.LatLng({"lat":47.488078,"lng":-122.169664}),
+                    //    new google.maps.LatLng({"lat":47.487984,"lng":-122.171882})
+                    //];
+                    polygon = intersections["549067df"][b].map(x => new google.maps.LatLng(x));
+                    console.log("Area of " + fieldNames[b] + " intersected 549067df");
+                    console.log(google.maps.geometry.spherical.computeArea(polygon) + "\n");
+                    result += google.maps.geometry.spherical.computeArea(polygon) + "\n";
+                }
+                console.log("Paste into Excel:");
+                console.log(result);
+            },
+            error:function(jqXHR, textStatus, errorThrown) {
+                console.log('getJSON request failed! ' + textStatus);
+                console.log("incoming Text " + jqXHR.responseText);
+            }      
+        });                         
+
+
+
+        map.addListener('idle', function() {
+            refreshS2Grid($("#slider").slider("value"));
+        });        
+    } // not initialized.  should do an early out.
+} // initialize map
+
+</script>
+</head>
+
+<body>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+<link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css">
+<script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+<script>
+    $.getJSON('apikey.json', function (data) {
+        var s = document.createElement("script");
+        s.type = "text/javascript";
+        s.src = "http://maps.googleapis.com/maps/api/js?key=" + data.key + "&libraries=geometry&callback=initializeMap";
+        $("head").append(s);
+    })
+    .fail(function(jqXHR, textStatus, errorThrown) { 
+        console.log('getJSON request failed! ' + textStatus); 
+        console.log("incoming Text " + jqXHR.responseText);
+    });
+</script>
+<div class="container">
+    <div id="map_canvas"></div>
+    <div id="border"></div>
+    <div id="results"></div>
+    <p>
+        <label for = "s2cellLevel">S2 cell level:</label>
+         <input type = "text" id = "s2cellLevel"
+            style = "border:0; color:#b9cd6d; font-weight:bold;">
+    </p>
+    <div id="slider"></div>
+</div>
+</body>
+</html>
