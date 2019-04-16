@@ -529,6 +529,57 @@ void ParsePolygons(string const & input, vector<S2Polygon *> *polygons) {
     }
 }
 
+void CoverFields(int socket, int minLevel, int maxLevel, vector<S2Polygon *> const & fields) {
+    S2RegionCoverer::Options options;
+    options.set_max_cells(100000);
+    options.set_min_level(minLevel);
+    options.set_max_level(maxLevel);
+    S2RegionCoverer coverer(options);
+
+    vector<S2CellId> cells;
+    for (auto field : fields) {
+        vector<S2CellId> newCells;
+        coverer.GetCovering(*field, &newCells);
+        for (auto cell : newCells) {
+            if (std::find(cells.begin(), cells.end(), cell) == cells.end()) {
+                cells.push_back(cell);
+            }
+        }
+    }
+
+    constexpr int maxCells = 10000;
+    int cellCount=0;
+    string ids("");
+    string bounds("");
+    string cellDelimiter("");
+    for (auto id : cells) {
+        if (cellCount++ > maxCells) {
+            Respond(socket, "403 Forbidden", "text/plain", "Too many cells requested");
+            return;
+        }
+        ids += cellDelimiter + string("\"") + id.ToToken() + "\"";
+
+        S2Cell cell(id);
+        string delimeter("");
+        bounds += cellDelimiter + "[";
+        for (int i=0; i<4; i++) {
+            S2LatLng point(cell.GetVertex(i));
+            bounds += delimeter 
+                    + "{\"lat\":"
+                    + to_string(point.lat().degrees())
+                    + ", \"lng\":"
+                    + to_string(point.lng().degrees())
+                    + "}"; 
+            delimeter = ",";
+        }
+        bounds += "]";
+
+        cellDelimiter = ",";
+    }
+    string result = "{\"ids\":[" + ids + "],\"bounds\":[" + bounds + "]}";
+
+    Respond(socket, "200 OK", "text/plain", result);
+}
 
 void GenerateCover(int socket, map<string,string> const & params) {
     // params are:
@@ -566,7 +617,20 @@ void GenerateCover(int socket, map<string,string> const & params) {
     }
     it = params.find(string("rectpoints"));
     if (it == params.end()) {
-        ReportError(socket, "COVER request requires RECTPOINTS argument");
+        // Also allow fields
+        it = params.find(string("fields"));
+        if (it == params.end()) {
+            ReportError(socket, "COVER request requires RECTPOINTS or FIELDS argument");
+            return;
+        }
+        vector<S2Polygon *> fields;
+        printf("Parsing polygons\n");
+        ParsePolygons(it->second, &fields);
+        if (fields.empty()) {
+            ReportError(socket, "COVER request FIELDS argument invalid");
+            return;        
+        }
+        CoverFields(socket, minLevel, maxLevel, fields);
         return;
     }
     S2LatLngRect rect;
