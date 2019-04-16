@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<title>Max Mu Field Finder</title>
+<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+<style type="text/css">
+html { height: 100%; }
+body { height: 100%; margin: 0; padding: 0; }
+.container {display: flex; height: 100%; flex-direction: column;}
+#map_canvas {width:100%; height:70%; min-height: 200px;}
+#slider {width: 50%; overflow:auto;}
+ul.no_bullet {list-style-type: none; padding: 0; margin: 0; }
+li.checked {background: url('./images/checked.png') no-repeat left top; padding-left: 36px; padding-top: 4px; line-height: 1.5em; height:auto}
+li.unchecked {background: url('./images/unchecked.png') no-repeat left top; padding-left: 36px; padding-top: 4px; line-height: 1.5em; height:auto}
+</style>
+
+<script type="text/javascript">
+
+var map;
+var mapInitialized = false;
+
+var markers = {};
+
+var ignore = [];
+var portal = [];
+
+var link = {};
+var selectingLink = false;
+var selectedLink = {};
+
+var fields = [];
+
+var s2data = {};
+var s2polygons = [];
+
+function drawS2Grid() {
+    for (let i=0; i<s2polygons.length; i++){
+        s2polygons[i].setMap(null);
+    }
+    s2polygons = [];
+    for (let i=0;i<s2data.length;i++){
+        s2polygons.push(new google.maps.Polygon({
+            path: s2data[i].points,
+            strokeColor: '#0000FF',
+            strokeOpacity: 0.5,
+            strokeWeight: 1,
+            fillOpacity: 0,
+            map: map
+        }));
+    }
+    console.log("Cell count: " + s2data.length);
+    if (s2data.length < 100) {
+        for (let i=0;i<s2data.length;i++){
+            let lat = 0;
+            let lng = 0;
+            for (let point in s2data[i].points) {
+                lat += s2data[i].points[point].lat;
+                lng += s2data[i].points[point].lng;                
+            }
+            lat /= s2data[i].points.length;
+            lng /= s2data[i].points.length;
+            s2polygons.push(new google.maps.Marker({
+                position: new google.maps.LatLng(lat,lng),
+                map: map,
+                icon: "/images/transparent.png",
+                label: {
+                    text: s2data[i].name,
+                    color: "blue",
+                    fontWeight: "bold",
+                    fontSize: "16px"
+                }
+            }));
+        }
+    }
+}
+
+function refreshS2Grid(level) {
+    let bounds = map.getBounds();
+    let ne = bounds.getNorthEast();
+    let sw = bounds.getSouthWest();
+    let rectPoints = ne.lat().toString() + "," + ne.lng().toString()
+                + "_" + ne.lat().toString() + "," + sw.lng().toString()
+                + "_" + sw.lat().toString() + "," + ne.lng().toString()
+                + "_" + sw.lat().toString() + "," + sw.lng().toString();
+    $.ajax({
+        url:"cover?minLevel=" 
+            + level 
+            + "&maxLevel="
+            + level
+            + "&rectpoints="
+            + rectPoints,
+        success:function(data){
+            $("#s2cellLevel").val(level);
+            s2data = JSON.parse(data);
+            drawS2Grid();
+        },
+        error:function(jqXHR, textStatus, errorThrown) {
+            if (jqXHR.status == 403) {
+                // Clear the drawn cells
+                for (let i=0; i<s2polygons.length; i++){
+                    s2polygons[i].setMap(null);
+                }
+                s2polygons = [];
+                // Inform the user they're too zoomed out to draw the cells at the requested level
+                $("#s2cellLevel").val(level + " (zoom in)");
+            }
+            else {
+                console.log('getJSON request failed! ' + textStatus);
+                console.log("incoming Text " + jqXHR.responseText);
+            }
+        }      
+    });                         
+}
+
+function SanitizeGuid(guid) {
+    // Convert the guid into a string that can be used as an ID for a DOM element
+    const reservedCharacters = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
+    let sanitized = "";
+    if (guid[0] >= '0' && guid[0] <= '9') {
+        sanitized = "g";
+    }
+    for (let i=0; i<guid.length; i++) {
+        if (reservedCharacters.includes(guid[i])) {
+            sanitized += "_";
+        }
+        else {
+            sanitized += guid[i];
+        }
+    }
+    return sanitized;
+}
+
+function FieldGuid(triangle) {
+    let guids = [triangle[0].guid, triangle[1].guid, triangle[2].guid];
+    guids.sort();
+    return guids[0] + "___" + guids[1] + "___" + guids[2];
+}
+
+function FormatPls(triangle) {
+    return      triangle[0].latlng + "," + triangle[1].latlng
+        + "_" + triangle[0].latlng + "," + triangle[2].latlng
+        + "_" + triangle[1].latlng + "," + triangle[2].latlng;
+}
+
+function ClearSolution() {
+    $("#TriangleError").remove();
+    $("#BuildField").remove();
+    $("#CheckIntel").remove();
+}
+
+function makeMarker(p, iconUrl, lat, lng) {
+    let name = p.title + " " + p.latlng;
+    let marker = new google.maps.Marker({
+        position: new google.maps.LatLng(lat, lng),
+        map: map,
+        icon: {url: iconUrl, scaledSize: new google.maps.Size(20, 20), anchor: new google.maps.Point(10,10)},
+        title: name
+    });
+    
+    let div = document.createElement('div');
+    div.innerHTML = name;
+    div.setAttribute("id", p.guid);
+    jQuery.data(div, "guid", p.guid);
+
+    let infoWindow = new google.maps.InfoWindow({
+        content: div
+    });
+    jQuery.data(div, "infoWindow", infoWindow);
+
+    google.maps.event.addListener(marker, 'click', function () {
+        infoWindow.open(map, marker);
+        
+        // Dialog box
+        let guid = jQuery.data(infoWindow.getContent(), "guid");
+        let selectedPortal = portal.find(p => p.guid == guid);
+        let dialogTitle = selectedPortal.title;
+        let boundsFunction;
+        let boundsText;
+        let buttons = {};
+                
+        // Link button(s)
+        if (selectingLink) {
+            if (selectedLink.guid == guid) {
+                buttons['Cancel link'] = function () {
+                    selectingLink = false;
+                    $("#LinkPrompt").remove();
+                    $(this).dialog('close');
+                };
+            }
+            else {
+                buttons['Link to ' + selectedLink.title] = function () {
+                    ClearSolution();
+                    link = {
+                        from: selectedLink,
+                        to: selectedPortal,
+                        line: new google.maps.Polyline({
+                                path: [selectedLink, selectedPortal],
+                                strokeColor: '#FF0000',
+                                strokeOpacity: 1,
+                                strokeWeight: 2,
+                                fillColor: '#0000FF',
+                                fillOpacity: 0.05,
+                                map: map
+                            })
+                    };
+                    selectingLink = false;
+                    $("#LinkPrompt").remove();
+                    let fieldPrompt = $('<p id="FieldPrompt">Select portal to complete field</p>');
+                    $("#controls").append(fieldPrompt);
+                    $(this).dialog('close');
+                };
+            }
+        }
+        else {
+            if (jQuery.isEmptyObject(link)) {
+                buttons['Add link'] = function () {
+                    selectingLink = true;
+                    selectedLink = selectedPortal;
+                    let linkPrompt = $('<p id="LinkPrompt">Select portal to complete link from '
+                    + selectedPortal.title
+                    + '</p>');
+                    $("#controls").append(linkPrompt);
+                    $(this).dialog('close');
+                }
+            }
+            else {
+                buttons['Complete field'] = function () {
+                    let portals = [link.from, link.to, selectedPortal];
+                    fields.push({
+                        portals: portals,
+                        poly: new google.maps.Polygon({
+                            path: portals,
+                            strokeColor: '#0000FF',
+                            strokeOpacity: 0.5,
+                            strokeWeight: 1,
+                            fillColor: '#0000FF',
+                            fillOpacity: 0.3,
+                            map: map                           
+                        })
+                    });
+                    link.line.setMap(null);
+                    link = {};
+
+                    $("#FieldPrompt").remove();
+                    $(this).dialog('close');
+                }              
+            }
+        }
+        /*
+        for (link in links) {
+            if (links[link].from.guid == guid || links[link].to.guid == guid) {
+                buttons['Delete link ' + links[link].from.title + " => " + links[link].to.title] = (function closure(link) { return function () {
+                    ClearSolution();
+                    links[link].line.setMap(null);
+                    links.splice(link,1);
+                    $(this).dialog('close');
+                }})(link);
+            }
+        }
+        */
+        $("#dialog").dialog({buttons: buttons, title: dialogTitle, close: function() {infoWindow.close();}});
+    });
+
+    markers[p.guid] = marker;
+}
+
+function initializeMap()
+{
+    if (mapInitialized)
+    {
+        return;
+    }
+    // Default map options
+    var mapOptions = { center: new google.maps.LatLng(47.488451,-122.169666),
+                        zoom: 10,
+                        mapTypeId: google.maps.MapTypeId.ROADMAP };
+    
+    map = new google.maps.Map(document.getElementById("map_canvas"), mapOptions);
+    mapInitialized=true;
+
+    // Load the portal coordinates
+    // [{"title":"Title", "guid":"guid", "latlng":"lat,lng"},...]
+    $.ajaxSetup({
+        cache:false
+    });
+    // This is wrong.  The server should be configured to server up .json.gz instead of .json.
+    let jsonFile = 'portals.json';
+    //if (location.hostname != "localhost" && location.hostname != "127.0.0.1")
+    //    jsonFile += '.gz';
+    $.getJSON(jsonFile, function (data) {
+        ignore = data.ignore;
+        portal = data.portals;
+        
+        for (let i = 0; i < ignore.length; i++) {
+            ignore[i].guid = SanitizeGuid(ignore[i].guid);
+        }
+        for (let i = 0; i < portal.length; i++) {
+            portal[i].guid = SanitizeGuid(portal[i].guid);
+            
+            // convexHull function wants x,y
+            let latlngArray = data.portals[i].latlng.split(',');
+            let lat = parseFloat(latlngArray[0]);
+            let lng = parseFloat(latlngArray[1]);
+            data.portals[i].x = lng;
+            data.portals[i].y = lat;
+            
+            // google maps wants lat and lng
+            data.portals[i].lat = lat;
+            data.portals[i].lng = lng;
+        }
+        
+        let minLat = 9000;
+        let minLng = 9000;
+        let maxLat = -9000;
+        let maxLng = -9000;
+        for (let i=0; i<portal.length; i++) {
+            let latlngArray = portal[i].latlng.split(',');
+            let lat = parseFloat(latlngArray[0]);
+            let lng = parseFloat(latlngArray[1]);
+            if (lat < minLat) {
+                minLat = lat;
+            }
+            if (lat > maxLat) {
+                maxLat = lat;
+            }
+            if (lng < minLng) {
+                minLng = lng;
+            }
+            if (lng > maxLng) {
+                maxLng = lng;
+            }
+            if (ignore.some(e => e.guid === portal[i].guid)) {
+                makeMarker(portal[i], './images/neutral.png', lat, lng);
+            }
+            else {
+                makeMarker(portal[i], './images/hum_reso_08.png', lat, lng);
+            }
+            
+        }
+
+                
+        let center = {};
+        center.lat = (minLat + maxLat)/2;
+        center.lng = (minLng + maxLng)/2;
+        map.setCenter(new google.maps.LatLng(center));
+        
+    })
+    .fail(function(jqXHR, textStatus, errorThrown) { 
+        console.log('getJSON request failed! ' + textStatus); 
+        console.log("incoming Text " + jqXHR.responseText);
+    });
+
+    $("#slider").slider({min:9, max:18, slide: function(event, ui) {
+        refreshS2Grid(ui.value);
+    }});
+    $("#s2cellLevel").val($("#slider").slider("value"));
+
+    map.addListener('idle', function() {
+            refreshS2Grid($("#slider").slider("value"));
+        });        
+
+}
+
+</script>
+</head>
+
+<body>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+<link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css">
+<script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+<script>
+    $.getJSON('apikey.json', function (data) {
+        var s = document.createElement("script");
+        s.type = "text/javascript";
+        s.src = "http://maps.googleapis.com/maps/api/js?key=" + data.key + "&callback=initializeMap";
+        $("head").append(s);
+    })
+    .fail(function(jqXHR, textStatus, errorThrown) { 
+        console.log('getJSON request failed! ' + textStatus); 
+        console.log("incoming Text " + jqXHR.responseText);
+    });
+</script>
+<div class="container">
+    <div id="map_canvas"></div>
+    <div id="controls">
+        <p>
+            <label for = "s2cellLevel">S2 cell level:</label>
+             <input type = "text" id = "s2cellLevel"
+                style = "border:0; color:#b9cd6d; font-weight:bold;">
+        </p>
+        <div id="slider"></div>
+    </div>
+</div>
+<div id="dialog"></div>
+</body>
+</html>
