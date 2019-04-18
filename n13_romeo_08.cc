@@ -529,24 +529,7 @@ void ParsePolygons(string const & input, vector<S2Polygon *> *polygons) {
     }
 }
 
-void CoverFields(int socket, int minLevel, int maxLevel, vector<S2Polygon *> const & fields) {
-    S2RegionCoverer::Options options;
-    options.set_max_cells(100000);
-    options.set_min_level(minLevel);
-    options.set_max_level(maxLevel);
-    S2RegionCoverer coverer(options);
-
-    vector<S2CellId> cells;
-    for (auto field : fields) {
-        vector<S2CellId> newCells;
-        coverer.GetCovering(*field, &newCells);
-        for (auto cell : newCells) {
-            if (std::find(cells.begin(), cells.end(), cell) == cells.end()) {
-                cells.push_back(cell);
-            }
-        }
-    }
-
+void CellBounds(int socket, vector<S2CellId> const & cells) {
     constexpr int maxCells = 10000;
     int cellCount=0;
     string ids("");
@@ -579,6 +562,26 @@ void CoverFields(int socket, int minLevel, int maxLevel, vector<S2Polygon *> con
     string result = "{\"ids\":[" + ids + "],\"bounds\":[" + bounds + "]}";
 
     Respond(socket, "200 OK", "text/plain", result);
+}
+
+void CoverFields(int socket, int minLevel, int maxLevel, vector<S2Polygon *> const & fields) {
+    S2RegionCoverer::Options options;
+    options.set_max_cells(100000);
+    options.set_min_level(minLevel);
+    options.set_max_level(maxLevel);
+    S2RegionCoverer coverer(options);
+
+    vector<S2CellId> cells;
+    for (auto field : fields) {
+        vector<S2CellId> newCells;
+        coverer.GetCovering(*field, &newCells);
+        for (auto cell : newCells) {
+            if (std::find(cells.begin(), cells.end(), cell) == cells.end()) {
+                cells.push_back(cell);
+            }
+        }
+    }
+    CellBounds(socket, cells);
 }
 
 void GenerateCover(int socket, map<string,string> const & params) {
@@ -695,6 +698,23 @@ void GenerateCover(int socket, map<string,string> const & params) {
     /*
     47.490477,-122.178857_47.490900,-122.164250_47.483857,-122.164184_47.484339,-122.179119
     */
+}
+
+void Children(int socket, map<string,string> const & params) {
+    // params are:
+    // cell string 
+    map<string,string>::const_iterator it;
+    it = params.find(string("cell"));
+    if (it == params.end()) {
+        ReportError(socket, "CHILDREN request requires CELL argument");
+        return;
+    }
+    S2CellId cellId = S2CellId::FromToken(it->second.c_str(), it->second.length());
+    vector<S2CellId> cells;
+    for (int i=0; i<4; i++) {
+        cells.push_back(cellId.child(i));
+    }
+    CellBounds(socket, cells);
 }
 
 void FindIntersections(int socket, map<string,string> const & params) {
@@ -912,10 +932,15 @@ int main(int argc, char const *argv[])
                 ParseArgs(params, &arguments);
                 GenerateCover(new_socket, arguments);
             }
-            if (action == "intersect") {
+            else if (action == "intersect") {
                 map<string,string> arguments;
                 ParseArgs(params, &arguments);
                 FindIntersections(new_socket, arguments);
+            }
+            else if (action == "children") {
+                map<string,string> arguments;
+                ParseArgs(params, &arguments);
+                Children(new_socket, arguments);
             }
             else {
                 //usage(new_socket, tokens[0].c_str(), uri);
