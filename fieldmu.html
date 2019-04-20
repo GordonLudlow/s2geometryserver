@@ -2,13 +2,13 @@
 
 <html>
 <head>
-<title>Max Mu Field Finder</title>
+<title>Field MU Entry</title>
 <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
 <style type="text/css">
 html { height: 100%; }
 body { height: 100%; margin: 0; padding: 0; }
 .container {display: flex; height: 100%; flex-direction: column;}
-#map_canvas {width:100%; height:70%; min-height: 200px;}
+#map_canvas {width:100%; height:70%; min-height: 400px;}
 #slider {width: 50%; overflow:auto;}
 ul.no_bullet {list-style-type: none; padding: 0; margin: 0; }
 li.checked {background: url('./images/checked.png') no-repeat left top; padding-left: 36px; padding-top: 4px; line-height: 1.5em; height:auto}
@@ -29,10 +29,13 @@ var link = {};
 var selectingLink = false;
 var selectedLink = {};
 
-var fields = [];
+var fields = {};
 
 var s2data = {};
 var s2polygons = [];
+
+var fieldMuDB = false;
+// FieldMU: guid => guid, MU
 
 function drawS2Grid() {
     for (let i=0; i<s2polygons.length; i++){
@@ -75,44 +78,6 @@ function drawS2Grid() {
     }
 }
 
-function refreshS2Grid(level) {
-    let bounds = map.getBounds();
-    let ne = bounds.getNorthEast();
-    let sw = bounds.getSouthWest();
-    let rectPoints = ne.lat().toString() + "," + ne.lng().toString()
-                + "_" + ne.lat().toString() + "," + sw.lng().toString()
-                + "_" + sw.lat().toString() + "," + ne.lng().toString()
-                + "_" + sw.lat().toString() + "," + sw.lng().toString();
-    $.ajax({
-        url:"cover?minLevel=" 
-            + level 
-            + "&maxLevel="
-            + level
-            + "&rectpoints="
-            + rectPoints,
-        success:function(data){
-            $("#s2cellLevel").val(level);
-            s2data = JSON.parse(data);
-            drawS2Grid();
-        },
-        error:function(jqXHR, textStatus, errorThrown) {
-            if (jqXHR.status == 403) {
-                // Clear the drawn cells
-                for (let i=0; i<s2polygons.length; i++){
-                    s2polygons[i].setMap(null);
-                }
-                s2polygons = [];
-                // Inform the user they're too zoomed out to draw the cells at the requested level
-                $("#s2cellLevel").val(level + " (zoom in)");
-            }
-            else {
-                console.log('getJSON request failed! ' + textStatus);
-                console.log("incoming Text " + jqXHR.responseText);
-            }
-        }      
-    });                         
-}
-
 function SanitizeGuid(guid) {
     // Convert the guid into a string that can be used as an ID for a DOM element
     const reservedCharacters = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
@@ -135,6 +100,18 @@ function FieldGuid(triangle) {
     let guids = [triangle[0].guid, triangle[1].guid, triangle[2].guid];
     guids.sort();
     return guids[0] + "___" + guids[1] + "___" + guids[2];
+}
+
+
+function ParseFieldGuid(guid) {
+    let portalGuids = guid.split(/___/g);
+    
+    let triangle = [];
+    for (let i in portalGuids) {
+        triangle[i] = portal.find(p => p.guid == portalGuids[i]);
+    }
+    
+    return triangle;
 }
 
 function FormatPls(triangle) {
@@ -227,7 +204,8 @@ function makeMarker(p, iconUrl, lat, lng) {
             else {
                 buttons['Complete field'] = function () {
                     let portals = [link.from, link.to, selectedPortal];
-                    fields.push({
+                    let elementId = FieldGuid(portals);
+                    fields[elementId] = {
                         portals: portals,
                         poly: new google.maps.Polygon({
                             path: portals,
@@ -238,11 +216,41 @@ function makeMarker(p, iconUrl, lat, lng) {
                             fillOpacity: 0.3,
                             map: map                           
                         })
-                    });
+                    };
                     link.line.setMap(null);
                     link = {};
-
                     $("#FieldPrompt").remove();
+
+                    let fieldElement = $('<p id="' 
+                        + elementId
+                        + '">'
+                        + portals[0].title
+                        + " - "
+                        + portals[1].title
+                        + " - "
+                        + portals[2].title
+                        + ': <input type="number" placeholder="MU"/>'
+                        + '<button onclick=\'RemoveField("' + elementId + '");\'>Remove</button>'
+                        + '</p>');
+
+                    $("#fields").append(fieldElement);
+                    $("#" + elementId).change(function () {
+                        let value = $("#" + elementId + " input").val();
+                        if (fieldMuDB) {
+                            let objectStore = fieldMuDB.transaction(['FieldMU'],'readwrite').objectStore('FieldMU');
+                            let req = objectStore.openCursor(elementId);
+                            req.onsuccess = function(e) {
+                                let cursor = e.target.result;
+                                if (cursor) { // key already exists
+                                    const updateData = cursor.value;
+                                    updateData.MU = value;
+                                    cursor.update(updateData);
+                                } else { // key does not exist
+                                    objectStore.add({guid: elementId, MU: value});
+                                }
+                            };
+                        }
+                    });
                     $(this).dialog('close');
                 }              
             }
@@ -344,24 +352,134 @@ function initializeMap()
         center.lat = (minLat + maxLat)/2;
         center.lng = (minLng + maxLng)/2;
         map.setCenter(new google.maps.LatLng(center));
-        
+
+        let request = window.indexedDB.open("FieldMu", 1);
+        request.onerror = function(event) {
+            console.error("openDb:", event.target.errorCode);
+            fieldMuDB = false;
+        };
+        request.onsuccess = function(event) {
+            fieldMuDB = event.target.result;
+            let store = fieldMuDB.transaction(['FieldMU'],'readonly').objectStore('FieldMU');
+            store.getAll().onsuccess = function(e) {
+                if (e.target.result) {
+                    let result = e.target.result;
+                    result.forEach(function(fieldRecord) {
+                        // Portals from GUID
+                        let elementId = fieldRecord.guid;
+                        let portals = ParseFieldGuid(elementId);
+                        fields[elementId] = {
+                            portals: portals,
+                            poly: new google.maps.Polygon({
+                                path: portals,
+                                strokeColor: '#0000FF',
+                                strokeOpacity: 0.5,
+                                strokeWeight: 1,
+                                fillColor: '#0000FF',
+                                fillOpacity: 0,
+                                map: map                           
+                            })
+                        };                        
+                        let fieldElement = $('<p id="' 
+                            + elementId
+                            + '">'
+                            + portals[0].title
+                            + " - "
+                            + portals[1].title
+                            + " - "
+                            + portals[2].title
+                            + ': <input type="number" value="'
+                            + fieldRecord.MU
+                            + '"/>'
+                            + '<button onclick=\'RemoveField("' + elementId + '");\'>Remove</button>'
+                            + '</p>');
+
+                        // TODO - refactor this copy pasta                        
+                        $("#fields").append(fieldElement);
+                        $("#" + elementId).change(function () {
+                            let value = $("#" + elementId + " input").val();
+                            if (fieldMuDB) {
+                                let objectStore = fieldMuDB.transaction(['FieldMU'],'readwrite').objectStore('FieldMU');
+                                let req = objectStore.openCursor(elementId);
+                                req.onsuccess = function(e) {
+                                    let cursor = e.target.result;
+                                    if (cursor) { // key already exists
+                                        const updateData = cursor.value;
+                                        updateData.MU = value;
+                                        cursor.update(updateData);
+                                    } else { // key does not exist
+                                        objectStore.add({guid: elementId, MU: value});
+                                    }
+                                };
+                            }
+                        });
+                    })
+                }
+            }
+        };
+        request.onupgradeneeded = function(event) {
+            fieldMuDB = event.target.result;
+            keyStore = fieldMuDB.createObjectStore("FieldMU", { keyPath: "guid" });
+        }
+
     })
     .fail(function(jqXHR, textStatus, errorThrown) { 
         console.log('getJSON request failed! ' + textStatus); 
         console.log("incoming Text " + jqXHR.responseText);
     });
 
-    $("#slider").slider({min:9, max:18, slide: function(event, ui) {
-        refreshS2Grid(ui.value);
-    }});
-    $("#s2cellLevel").val($("#slider").slider("value"));
-
-    map.addListener('idle', function() {
-            refreshS2Grid($("#slider").slider("value"));
-        });        
-
+    jsonFile = 'cover.json';
+    $.getJSON(jsonFile, function (data) {
+        s2data = data;
+        drawS2Grid();
+    })
+    .fail(function(jqXHR, textStatus, errorThrown) { 
+        console.log('getJSON request failed! ' + textStatus); 
+        console.log("incoming Text " + jqXHR.responseText);
+    });
 }
 
+function RemoveField(fieldGuid) {
+    let objectStore = fieldMuDB.transaction(['FieldMU'],'readwrite').objectStore('FieldMU');
+    let req = objectStore.delete(fieldGuid);
+    req.onsuccess = function(e) {
+        $("#" + fieldGuid).remove();
+    }
+    fields[fieldGuid].poly.setMap(null);
+    delete fields[fieldGuid];
+}
+
+function Export() {
+    if (fieldMuDB) {
+        let store = fieldMuDB.transaction(['FieldMU'],'readonly').objectStore('FieldMU');
+        store.getAll().onsuccess = function(e) {
+            if (e.target.result) {
+                let dialogText = '<textarea readonly id="exported">';
+                let delimiter = "";
+                let result = e.target.result;
+                result.forEach(function(fieldRecord) {
+                    dialogText += delimiter;
+                    delimiter = ",";
+                    dialogText += "\"" + fieldRecord.guid + "\":" +  fieldRecord.MU;
+                });
+                dialogText += "</textarea>";
+                $("#dialog").html(dialogText);
+                $("#dialog").dialog({
+                    buttons: [{
+                        text: "Copy",
+                        click: function() {
+                            $("#exported").focus();
+                            $("#exported").select();
+                            document.execCommand("copy");
+                            //$( this ).dialog( "close" ); // this makes it not copy
+                        }
+                    }],
+                    close: function() {$("#dialog").html("");}
+                });
+            }
+        };
+    }
+}
 </script>
 </head>
 
@@ -383,15 +501,11 @@ function initializeMap()
 </script>
 <div class="container">
     <div id="map_canvas"></div>
-    <div id="controls">
-        <p>
-            <label for = "s2cellLevel">S2 cell level:</label>
-             <input type = "text" id = "s2cellLevel"
-                style = "border:0; color:#b9cd6d; font-weight:bold;">
-        </p>
-        <div id="slider"></div>
-    </div>
+    <div id="controls"></div>
+    <div id="fields"></div>
+    <div><button onclick='Export();'>Export</button></div>
 </div>
 <div id="dialog"></div>
 </body>
 </html>
+

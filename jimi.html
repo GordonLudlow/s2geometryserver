@@ -23,6 +23,42 @@ var map;
 var mapInitialized = false;
 var s2data = {};
 var s2polygons = [];
+var portal = [];
+
+function SanitizeGuid(guid) {
+    // Convert the guid into a string that can be used as an ID for a DOM element
+    const reservedCharacters = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
+    let sanitized = "";
+    if (guid[0] >= '0' && guid[0] <= '9') {
+        sanitized = "g";
+    }
+    for (let i=0; i<guid.length; i++) {
+        if (reservedCharacters.includes(guid[i])) {
+            sanitized += "_";
+        }
+        else {
+            sanitized += guid[i];
+        }
+    }
+    return sanitized;
+}
+
+function FieldGuid(triangle) {
+    let guids = [triangle[0].guid, triangle[1].guid, triangle[2].guid];
+    guids.sort();
+    return guids[0] + "___" + guids[1] + "___" + guids[2];
+}
+
+function ParseFieldGuid(guid) {
+    let portalGuids = guid.split(/___/g);
+    
+    let triangle = [];
+    for (let i in portalGuids) {
+        triangle[i] = portal.find(p => p.guid == portalGuids[i]);
+    }
+    
+    return triangle;
+}
 
 function IntersectAndFindWeights(fields, fieldList, cells) {
     cellList = cells.ids.join("_");
@@ -63,9 +99,9 @@ function FindWeights(fields, fieldList, cells, areas) {
             }
         }
     }
-    for (let i=0; i<fields.length; i++) {
-        console.log(fields[i].name + " " + count[i]);
-    }
+    //for (let i=0; i<fields.length; i++) {
+    //    console.log(fields[i].name + " " + count[i]);
+    //}
     let range = {}; // range of weights for each cell
     let solved = []; // fields that are computable from known weights
 
@@ -88,8 +124,22 @@ function FindWeights(fields, fieldList, cells, areas) {
                     range[cell].min = minWeight;
                 if (maxWeight < range[cell].max)
                     range[cell].max = maxWeight;
-                if (minWeight > maxWeight)
-                    debugger;
+                if (range[cell].min > range[cell].max) {
+                    $.ajax({
+                        url:"children?cell=" + cell,
+                        success:function(data){
+                            let newCells = JSON.parse(data);
+                            cells.ids.splice(cellIndex, 1, ...newCells.ids);
+                            cells.bounds.splice(cellIndex, 1, ...newCells.bounds);
+                            IntersectAndFindWeights(fields, fieldList, cells);
+                        },
+                        error:function(jqXHR, textStatus, errorThrown) {
+                            console.log('getJSON request failed! ' + textStatus);
+                            console.log("incoming Text " + jqXHR.responseText);
+                        }      
+                    });
+                    return;
+                }
             }
             else {
                 range[cell] = {min: minWeight, max: maxWeight};
@@ -405,8 +455,7 @@ function initializeMap()
             refreshS2Grid(ui.value);
         }});
         $("#s2cellLevel").val($("#slider").slider("value"));
-        
-        
+            
         new google.maps.Polygon({
             path: [{"lat":47.994058,"lng":-122.242468},{"lat":47.430873,"lng":-123.977276},{"lat":46.457519,"lng":-122.693956},{"lat":46.984342,"lng":-120.994610}],
             strokeColor: '#0000FF',
@@ -417,208 +466,75 @@ function initializeMap()
         });
         
 
-        $.getJSON('portals.json', function (data) {
-            for (let i=0; i<data.portals.length; i++) {
-                let latlngArray = data.portals[i].latlng.split(',');
+        $.getJSON('portals.json', function (portalData) {
+            ignore = portalData.ignore;
+            portal = portalData.portals;
+            for (let i=0; i<portal.length; i++) {
+                portal[i].guid = SanitizeGuid(portal[i].guid);
+                let latlngArray = portal[i].latlng.split(',');
                 let lat = parseFloat(latlngArray[0]);
                 let lng = parseFloat(latlngArray[1]);
                 
-                data.portals[i].lat = lat;
-                data.portals[i].lng = lng;
-                let name = data.portals[i].title + " " + data.portals[i].latlng;
+                portal[i].lat = lat;
+                portal[i].lng = lng;
+                let name = portal[i].title + " " + portal[i].latlng;
                 
                 let marker = new google.maps.Marker({
                     position: new google.maps.LatLng(lat, lng),
                     map: map,
-                    icon: {url: './images/hum_reso_08.png', scaledSize: new google.maps.Size(20, 20), anchor: new google.maps.Point(10,10)},
+                    icon: {url: './images/hum_reso_08.png', 
+                        scaledSize: new google.maps.Size(20, 20), anchor: new google.maps.Point(10,10)},
                     title: name
                 });
             }
-        });
 
-let fields = [
-    {name:"St. Matthew's Lutheran Church - Gymnasium At Highlands Church - Bethlehem Lutheran Church",                       mu: 206},
-    {name:"St. Matthew's Lutheran Church - Bethlehem Lutheran Church - First Ukrainian Pentecostal Church",                  mu: 639},
-    {name:"Gymnasium At Highlands Church - Bethlehem Lutheran Church - Powerline Playground",                                mu: 229},
-    {name:"Martin Luther King Jr Memorial Baptist Church - Powerline Playground - First Ukrainian Pentecostal Church",       mu: 854},
-    {name:"Bethlehem Lutheran Church - Powerline Playground - First Ukrainian Pentecostal Church",                           mu: 646},
-    {name:"Horse Sculpture - St. Matthew's Lutheran Church - Gymnasium At Highlands Church",                                 mu: 256},
-    {name:"Horse Sculpture - Gymnasium At Highlands Church - Powerline Playground",                                          mu: 8},
-    {name:"St. Matthew's Lutheran Church - Colleen's Little Free Library - Bethlehem Lutheran Church",                       mu: 722},
-    {name:"Colleen's Little Free Library - Bethlehem Lutheran Church - Powerline Playground",                                mu: 841},
-    {name:"Moonlit Swan Mural - Meadow Crest Playground - Caterpillar Land Structure",                                       mu: 5},
-    {name:"Sunset Community Garden - Buddhist Foundation - Calvary Baptist Church",                                          mu: 7},
-    {name:"Church of Nazarene - Martin Luther King Jr Memorial Baptist Church - Renton Bible Church",                        mu: 67},
-    {name:"Colleen's Little Free Library - Kingdom Hall Of Jehovah's Witnesses - Hazen Water Tower",                         mu: 112},
-    {name:"Colleen's Little Free Library - Kingdom Hall Of Jehovah's Witnesses - Pickled Onion British Pub",                 mu: 136},
-    {name:"Colleen's Little Free Library - First Ukrainian Pentecostal Church - Pickled Onion British Pub",                  mu: 98},
-    {name:"Martin Luther King Jr Memorial Baptist Church - Renton Bible Church - Pickled Onion British Pub",                 mu: 194},
-    {name:"Martin Luther King Jr Memorial Baptist Church - Kingdom Hall Of Jehovah's Witnesses - Hazen Water Tower",         mu: 59},
-    {name:"Martin Luther King Jr Memorial Baptist Church - Kingdom Hall Of Jehovah's Witnesses - Pickled Onion British Pub", mu: 163},    
-    {name:"Caterpillar Land Structure - Saint Andrew Presbyterian Church - Pickled Onion British Pub",                       mu: 370},
-    {name:"Martin Luther King Jr Memorial Baptist Church - Renton Bible Church - Powerline Playground",                      mu: 248},
-    {name:"Martin Luther King Jr Memorial Baptist Church - Powerline Playground - LDS Church",                               mu: 400},
-    {name:"Martin Luther King Jr Memorial Baptist Church - LDS Church - Hazen Water Tower",                                  mu: 230},
-    {name:"St. Matthew's Lutheran Church - Meadow Crest Playground - Bethlehem Lutheran Church",                             mu: 185},
-    {name:"Union Plaque at Renton Technical College - Gymnasium At Highlands Church - Renton Community of Christ",           mu: 37},
-    {name:"Gymnasium At Highlands Church - Bethlehem Lutheran Church - Renton Community of Christ",                          mu: 76},
-    {name:"Kiwanis Park Ball Field - Bethlehem Lutheran Church - Saint Andrew Presbyterian Church",                          mu: 87},
-    {name:"Church of Nazarene - Martin Luther King Jr Memorial Baptist Church - Kingdom Hall Of Jehovah's Witnesses",        mu: 91},
-    {name:"St. Matthew's Lutheran Church - Bear Sculpture - Caterpillar Land Structure",                                     mu: 6},
-    {name:"St. Matthew's Lutheran Church - Meadow Crest Playground - Caterpillar Land Structure",                            mu: 6},
-    {name:"Kiwanis Park Ball Field - Bethlehem Lutheran Church - Powerline Playground",                                     mu:	217},
-    {name:"Bethlehem Lutheran Church - Powerline Playground - Renton Community of Christ",                                  mu:	212},
-    {name:"Hilltop Neighborhood Playground - Powerline Playground - Renton Community of Christ",	mu:	105},
-    {name:"Kiwanis Park Hoops - Kiwanis Park Ball Field - Powerline Playground",	mu:	8},
-    {name:"Kiwanis Park Hoops - Powerline Playground - Renton Community of Christ",	mu:	246},
-    {name:"Kiwanis Park Ball Field - Powerline Playground - Kiwanis Park Community Center",	mu:	26},
-    {name:"Kiwanis Park - Powerline Playground - Kiwanis Park Tennis Courts",	mu:	12},
-    {name:"Powerline Playground - Kiwanis Park Community Center - Kiwanis Park Playground",	mu:	10},
-    {name:"Powerline Playground - Kiwanis Park Playground - Kiwanis Park Tennis Courts",	mu:	2},
-    {name:"Metamorphosis - East Memorial Wall - Memorial Fountain", mu: 17},
-    {name:"East Memorial Wall - Memorial Fountain - South Lawn Memorial",	mu:8},
-    {name:"All to Myself I Think of You Memorial - Renton Aerie No 1722 F.O.E. - Sun Dial",	mu:11},
-    {name:"Metamorphosis - East Memorial Wall - South Lawn Memorial",	mu:42},
-    {name:"Lullabyland Memorial - Renton Aerie No 1722 F.O.E. - Love Forever Headstone",	mu:9},
-    {name:"Lullabyland Memorial - Renton Aerie No 1722 F.O.E. - Sun Dial",	mu:6},
-    {name:"All to Myself I Think of You Memorial - Renton Aerie No 1722 F.O.E. - Cedar View Memorial",	mu:17},
-    {name:"Love Forever Headstone - Fish Fountain - Prisoner of War Memorial",	mu:4},
-    {name:"Yeah Yeah Thanks Puddin - Remembered Forever - Fountain of Youth",	mu:6},
-    {name:"Metamorphosis - Jimi Hendrix Memorial - South Lawn Memorial",	mu:13},
-    {name:"Garden of Harmony - Love Forever Headstone - Fish Fountain",	mu:2},
-    {name:"Garden of Harmony - Remembered Forever - Fountain of Youth",	mu:3},
-    {name:"Iu-Mienh Community Memorial  - Fish Fountain - Prisoner of War Memorial",	mu:2},
-    {name:"Metamorphosis - Memorial Fountain - South Lawn Memorial",	mu:17},
-    {name:"Garden of Harmony - Iu-Mienh Community Memorial  - Fountain of Youth",	mu:3},
-    {name:"Iu-Mienh Community Memorial  - South Lawn Memorial - Prisoner of War Memorial",	mu:9},
-    {name:"Garden of Harmony - Love Forever Headstone - Remembered Forever",	mu:3},
-    {name:"Lullabyland Memorial - South Lawn Memorial - Prisoner of War Memorial",	mu:3},
-    {name:"Lullabyland Memorial - Love Forever Headstone - Prisoner of War Memorial",	mu:3},
-    {name:"Lullabyland Memorial - Sun Dial - South Lawn Memorial",	mu:3},
-    {name:"Garden of Harmony - Iu-Mienh Community Memorial  - Fish Fountain", mu:2},
-    {name:"Renton Aerie No 1722 F.O.E. - Greenwood Memorial Geometrical Fountain - Powerline Playground", mu:	31},
-    {name:"Sempre nel nostro cuore..Con amure bench - Garden of Friends Bench - Powerline Playground", mu:	3},
-    {name:"Sempre nel nostro cuore..Con amure bench - Greenwood Memorial Geometrical Fountain - Powerline Playground", mu:	8},
-    {name:"Garden of Friends Bench - Powerline Playground - East Memorial Wall", mu:	5},
-    {name:"Metamorphosis - Gazebo Memorial - Powerline Playground", mu:	11},
-    {name:"Bear Sculpture - Caterpillar Land Structure - First Ukrainian Pentecostal Church", mu:	13},
-    {name:"Meadow Crest Playground - Caterpillar Land Structure - First Ukrainian Pentecostal Church", mu:	14},
-    {name:"Meadow Crest Playground - Playground At Saint Andrew's Church - First Ukrainian Pentecostal Church", mu:	437},
-    {name:"Meadow Crest Playground - Saint Andrew Presbyterian Church - First Ukrainian Pentecostal Church", mu:	462},
-    {name:"Sierra Heights Park - Glencoe Park, Renton, WA - First Ukrainian Pentecostal Church", mu:	108},
-    {name:"Sierra Heights Park - First Ukrainian Pentecostal Church - Welcome To Sunset Neighborhood Park", mu:	322},
-    {name:"Colleen's Little Free Library - Glencoe Park, Renton, WA - First Ukrainian Pentecostal Church", mu:	82},
-    {name:"Colleen's Little Free Library - Glencoe Park, Renton, WA - Shannon's Village Clocktower", mu:	81},
-    {name:"Colleen's Little Free Library - First Ukrainian Pentecostal Church - Welcome To Sunset Neighborhood Park", mu:	282},
-    {name:"Colleen's Little Free Library - Welcome To Sunset Neighborhood Park - Shannon's Village Clocktower", mu:	378},
-    {name:"Metamorphosis - Gazebo Memorial - Shannon's Village Clocktower", mu:		58},
-    {name:"Powerline Playground - East Memorial Wall - Shannon's Village Clocktower", mu:		150},
-    {name:"Horse Sculpture - St. Matthew's Lutheran Church - KCLS: Renton Highlands Branch", mu:	108},
-    {name:"Horse Sculpture - Sunset Community Garden - KCLS: Renton Highlands Branch", mu:	204},
-    {name:"St. Matthew's Lutheran Church - First Ukrainian Pentecostal Church - KCLS: Renton Highlands Branch", mu:	314},
-{name:"Sunset Community Garden - Calvary Baptist Church - Sunset Court Park", mu:	12},
-    {name:"Sunset Community Garden - Sunset Court Park - KCLS: Renton Highlands Branch", mu:	29},
-{name:"Calvary Baptist Church - Sunset Court Park - Welcome To Sunset Neighborhood Park", mu:	192},
-    {name:"Calvary Baptist Church - Kingdom Hall Of Jehovah's Witnesses - Little Free Library At Sunset Neighborhood Park", mu:	19},
-    {name:"Calvary Baptist Church - Kingdom Hall Of Jehovah's Witnesses - Welcome To Sunset Neighborhood Park", mu:	26},
-{name:"Sunset Court Park - Kingdom Hall Of Jehovah's Witnesses - KCLS: Renton Highlands Branch", mu:	164},
-    {name:"Sunset Court Park - Kingdom Hall Of Jehovah's Witnesses - Welcome To Sunset Neighborhood Park", mu:	153},
-    {name:"Kingdom Hall Of Jehovah's Witnesses - First Ukrainian Pentecostal Church - KCLS: Renton Highlands Branch", mu:	666}
-];
-let fieldList = "47.506376,-122.185405_47.498003,-122.178323_47.500174,-122.174971+47.506376,-122.185405_47.500174,-122.174971_47.510143,-122.167571+47.498003,-122.178323_47.500174,-122.174971_47.492046,-122.168065+47.499248,-122.158894_47.492046,-122.168065_47.510143,-122.167571+47.500174,-122.174971_47.492046,-122.168065_47.510143,-122.167571+" +
-                "47.505053,-122.190736_47.506376,-122.185405_47.498003,-122.178323+47.505053,-122.190736_47.498003,-122.178323_47.492046,-122.168065+47.506376,-122.185405_47.50898,-122.16181_47.500174,-122.174971+47.50898,-122.16181_47.500174,-122.174971_47.492046,-122.168065+" +
-                "47.506584,-122.184391_47.507129,-122.180379_47.507376,-122.180548+47.50004,-122.186714_47.501111,-122.185214_47.500027,-122.185346+47.497344,-122.164351_47.499248,-122.158894_47.499119,-122.164861+" +
-                "47.50898,-122.16181_47.502637,-122.156826_47.503198,-122.153707+47.50898,-122.16181_47.502637,-122.156826_47.504539,-122.163725+47.50898,-122.16181_47.510143,-122.167571_47.504539,-122.163725+47.499248,-122.158894_47.499119,-122.164861_47.504539,-122.163725+47.499248,-122.158894_47.502637,-122.156826_47.503198,-122.153707+47.499248,-122.158894_47.502637,-122.156826_47.504539,-122.163725+" +
-                "47.507376,-122.180548_47.500188,-122.17064_47.504539,-122.163725+47.499248,-122.158894_47.499119,-122.164861_47.492046,-122.168065+47.499248,-122.158894_47.492046,-122.168065_47.496204,-122.153594+47.499248,-122.158894_47.496204,-122.153594_47.503198,-122.153707+" +
-                "47.506376,-122.185405_47.507129,-122.180379_47.500174,-122.174971+47.49368,-122.176582_47.498003,-122.178323_47.495442,-122.175727+47.498003,-122.178323_47.500174,-122.174971_47.495442,-122.175727+47.496466,-122.166939_47.500174,-122.174971_47.500188,-122.17064+47.497344,-122.164351_47.499248,-122.158894_47.502637,-122.156826+" +
-                "47.506376,-122.185405_47.507695,-122.180226_47.507376,-122.180548+47.506376,-122.185405_47.507129,-122.180379_47.507376,-122.180548+" +
-                "47.496466,-122.166939_47.500174,-122.174971_47.492046,-122.168065+47.500174,-122.174971_47.492046,-122.168065_47.495442,-122.175727+" +
-                "47.491105,-122.171558_47.492046,-122.168065_47.495442,-122.175727+47.49743,-122.167013_47.496466,-122.166939_47.492046,-122.168065+47.49743,-122.167013_47.492046,-122.168065_47.495442,-122.175727+47.496466,-122.166939_47.492046,-122.168065_47.497176,-122.165689+47.496787,-122.164995_47.492046,-122.168065_47.497165,-122.165215+47.492046,-122.168065_47.497176,-122.165689_47.496784,-122.165511+47.492046,-122.168065_47.496784,-122.165511_47.497165,-122.165215+" +
 
-                // need Metamorphosis - East Memorial Wall - Memorial Fountain
-                "47.48793,-122.173166_47.488078,-122.169664_47.486942,-122.171348+" +
-                // East Memorial Wall - Memorial Fountain - South Lawn Memorial
-                "47.488078,-122.169664_47.486942,-122.171348_47.485165,-122.172433+" +
-                //All to Myself I Think of You Memorial - Renton Aerie No 1722 F.O.E. - Sun Dial
-                "47.486764,-122.170208_47.488222,-122.171616_47.486194,-122.171397+" +
-                //Metamorphosis - East Memorial Wall - South Lawn Memorial
-                "47.48793,-122.173166_47.488078,-122.169664_47.485165,-122.172433+" +
-                //Lullabyland Memorial - Renton Aerie No 1722 F.O.E. - Love Forever Headstone
-                "47.486297,-122.172124_47.488222,-122.171616_47.48752,-122.172903+" +
-                //Lullabyland Memorial - Renton Aerie No 1722 F.O.E. - Sun Dial
-                "47.486297,-122.172124_47.488222,-122.171616_47.486194,-122.171397+" +
-                //All to Myself I Think of You Memorial - Renton Aerie No 1722 F.O.E. - Cedar View Memorial
-                "47.486764,-122.170208_47.488222,-122.171616_47.488451,-122.169666+" +
-                //Love Forever Headstone - Fish Fountain - Prisoner of War Memorial
-                "47.48752,-122.172903_47.486199,-122.173564_47.486325,-122.172827+" +
-                //Yeah Yeah Thanks Puddin - Remembered Forever - Fountain of Youth
-                "47.488086,-122.174574_47.487686,-122.173709_47.486378,-122.174457+" +
-                //Metamorphosis - Jimi Hendrix Memorial - South Lawn Memorial
-                "47.48793,-122.173166_47.486514,-122.173947_47.485165,-122.172433+" +
-                //Garden of Harmony - Love Forever Headstone - Fish Fountain
-                "47.486712,-122.173687_47.48752,-122.172903_47.486199,-122.173564+" +
-                //Garden of Harmony - Remembered Forever - Fountain of Youth
-                "47.486712,-122.173687_47.487686,-122.173709_47.486378,-122.174457+" +
-                //Iu-Mienh Community Memorial  - Fish Fountain - Prisoner of War Memorial
-                "47.48535,-122.174513_47.486199,-122.173564_47.486325,-122.172827+" +
-                //Metamorphosis - Memorial Fountain - South Lawn Memorial
-                "47.48793,-122.173166_47.486942,-122.171348_47.485165,-122.172433+" +
-                //Garden of Harmony - Iu-Mienh Community Memorial  - Fountain of Youth
-                "47.486712,-122.173687_47.48535,-122.174513_47.486378,-122.174457+" +
-                //Iu-Mienh Community Memorial  - South Lawn Memorial - Prisoner of War Memorial
-                "47.48535,-122.174513_47.485165,-122.172433_47.486325,-122.172827+" +
-                //Garden of Harmony - Love Forever Headstone - Remembered Forever
-                "47.486712,-122.173687_47.48752,-122.172903_47.487686,-122.173709+" +
-                //Lullabyland Memorial - South Lawn Memorial - Prisoner of War Memorial
-                "47.486297,-122.172124_47.485165,-122.172433_47.486325,-122.172827+" +
-                //Lullabyland Memorial - Love Forever Headstone - Prisoner of War Memorial
-                "47.486297,-122.172124_47.48752,-122.172903_47.486325,-122.172827+" +
-                //Lullabyland Memorial - Sun Dial - South Lawn Memorial
-                "47.486297,-122.172124_47.486194,-122.171397_47.485165,-122.172433+" +
-                //Garden of Harmony - Iu-Mienh Community Memorial  - Fish Fountain
-                "47.486712,-122.173687_47.48535,-122.174513_47.486199,-122.173564+" +
-
-                "47.488222,-122.171616_47.487722,-122.170559_47.492046,-122.168065+47.487944,-122.170096_47.488083,-122.169903_47.492046,-122.168065+47.487944,-122.170096_47.487722,-122.170559_47.492046,-122.168065+47.488083,-122.169903_47.492046,-122.168065_47.488078,-122.169664+47.48793,-122.173166_47.487901,-122.173749_47.492046,-122.168065+" +
-                "47.507695,-122.180226_47.507376,-122.180548_47.510143,-122.167571+47.507129,-122.180379_47.507376,-122.180548_47.510143,-122.167571+47.507129,-122.180379_47.500608,-122.170687_47.510143,-122.167571+47.507129,-122.180379_47.500188,-122.17064_47.510143,-122.167571+" +
-                "47.5137,-122.170932_47.513129,-122.159758_47.510143,-122.167571+47.5137,-122.170932_47.510143,-122.167571_47.500431,-122.18301+47.50898,-122.16181_47.513129,-122.159758_47.510143,-122.167571+47.50898,-122.16181_47.513129,-122.159758_47.506698,-122.15555+47.50898,-122.16181_47.510143,-122.167571_47.500431,-122.18301+47.50898,-122.16181_47.500431,-122.18301_47.506698,-122.15555+"+
-                "47.48793,-122.173166_47.487901,-122.173749_47.506698,-122.15555+47.492046,-122.168065_47.488078,-122.169664_47.506698,-122.15555+"+ 
-                "47.505053,-122.190736_47.506376,-122.185405_47.503273,-122.180721+47.505053,-122.190736_47.50004,-122.186714_47.503273,-122.180721+47.506376,-122.185405_47.510143,-122.167571_47.503273,-122.180721+"+
-"47.50004,-122.186714_47.500027,-122.185346_47.501791,-122.181564+" +
-                "47.50004,-122.186714_47.501791,-122.181564_47.503273,-122.180721+" +
-"47.500027,-122.185346_47.501791,-122.181564_47.500431,-122.18301+" +
-                "47.500027,-122.185346_47.502637,-122.156826_47.500223,-122.18175+" + 
-                "47.500027,-122.185346_47.502637,-122.156826_47.500431,-122.18301+" +
-"47.501791,-122.181564_47.502637,-122.156826_47.503273,-122.180721+" +
-                "47.501791,-122.181564_47.502637,-122.156826_47.500431,-122.18301+" +
-                "47.502637,-122.156826_47.510143,-122.167571_47.503273,-122.180721"
-                ; 
-let cells = ["5490686b", "54906869", "54906867", "54906861",
-             "5490686d", "5490686f", "54906865", "54906863",
-             "54906873", "54906871", "5490687b", "5490687d",
-             "54906875", "54906877", "54906879", "5490687f",
-             "549067e1", "549067df", "5490680b"];
-let cellList = cells.join("_");
-$.ajax({
-    url:"cover?minLevel=" 
-        + 13 
-        + "&maxLevel="
-        + 13
-        + "&fields="
-        + fieldList,
-    error:function(jqXHR, textStatus, errorThrown) {
-        if (jqXHR.status == 403) {
-            console.log("Too many fields to generate cover.");
+            $.getJSON('fieldmu.json', function (fieldMuData) {
+    // From fieldmu.json, construct fields and fieldList
+    fields = [];
+    fieldList = "";
+    fieldDelimiter = "";
+    for (var fieldGuid in fieldMuData) {
+        if (fieldMuData.hasOwnProperty(fieldGuid)) {
+            fields.push({name: fieldGuid, mu: fieldMuData[fieldGuid]});
+            let triangle = ParseFieldGuid(fieldGuid); 
+            fieldList += fieldDelimiter;
+            fieldDelimiter = "+";
+            let portalDelimiter = "";
+            for (let i=0; i<3; i++) {
+                fieldList += portalDelimiter;
+                portalDelimiter = "_";
+                fieldList += triangle[i].latlng;
+            }
         }
-        else {
-            console.log('getJSON request failed! ' + textStatus);
-            console.log("incoming Text " + jqXHR.responseText);
-        }
-    },      
-    success:function(data){
-            cells = JSON.parse(data);
-            IntersectAndFindWeights(fields, fieldList, cells);
-        }
+    }
+    $.ajax({
+        url:"cover?minLevel=" 
+            + 6 
+            + "&maxLevel="
+            + 6
+            + "&fields="
+            + fieldList,
+        error:function(jqXHR, textStatus, errorThrown) {
+            if (jqXHR.status == 403) {
+                console.log("Too many fields to generate cover.");
+            }
+            else {
+                console.log('getJSON request failed! ' + textStatus);
+                console.log("incoming Text " + jqXHR.responseText);
+            }
+        },      
+        success:function(data){
+                cells = JSON.parse(data);
+                IntersectAndFindWeights(fields, fieldList, cells);
+            }
     });
+})
+.fail(function(jqXHR, textStatus, errorThrown) { 
+    console.log('getJSON request failed! ' + textStatus); 
+    console.log("incoming Text " + jqXHR.responseText);
+});
+}); // portals.json
 
         map.addListener('idle', function() {
             refreshS2Grid($("#slider").slider("value"));
@@ -658,4 +574,3 @@ $.ajax({
 </div>
 </body>
 </html>
-
