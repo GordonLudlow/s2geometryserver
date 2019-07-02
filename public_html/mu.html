@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<title>Mind Units</title>
+<meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+<style type="text/css">
+html { height: 100%; }
+body { height: 100%; margin: 0; padding: 0; }
+.container {display: flex; height: 100%; flex-direction: column;}
+#map_canvas {width:100%; height:90%; min-height: 200px;}
+#border {width: 100%; height: 1%; min-height: 5px; background-color: #0078B5; cursor: ns-resize;}
+#results {width:100%; height:0%; overflow:auto; min-height: 0px;}
+#slider {width: 50%; overflow:auto;}
+ul.no_bullet {list-style-type: none; padding: 0; margin: 0; }
+li.checked {background: url('./images/checked.png') no-repeat left top; padding-left: 36px; padding-top: 4px; line-height: 1.5em; height:auto}
+li.unchecked {background: url('./images/unchecked.png') no-repeat left top; padding-left: 36px; padding-top: 4px; line-height: 1.5em; height:auto}
+</style>
+
+<script type="text/javascript">
+
+var map;
+var mapInitialized = false;
+var s2data = {};
+var s2polygons = [];
+var portal = [];
+
+function SanitizeGuid(guid) {
+    // Convert the guid into a string that can be used as an ID for a DOM element
+    const reservedCharacters = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
+    let sanitized = "";
+    if (guid[0] >= '0' && guid[0] <= '9') {
+        sanitized = "g";
+    }
+    for (let i=0; i<guid.length; i++) {
+        if (reservedCharacters.includes(guid[i])) {
+            sanitized += "_";
+        }
+        else {
+            sanitized += guid[i];
+        }
+    }
+    return sanitized;
+}
+
+function FieldGuid(triangle) {
+    let guids = [triangle[0].guid, triangle[1].guid, triangle[2].guid];
+    guids.sort();
+    return guids[0] + "___" + guids[1] + "___" + guids[2];
+}
+
+function ParseFieldGuid(guid) {
+    let portalGuids = guid.split(/___/g);
+    
+    let triangle = [];
+    for (let i in portalGuids) {
+        triangle[i] = portal.find(p => p.guid == portalGuids[i]);
+    }
+    
+    return triangle;
+}
+
+function IntersectAndFindWeights(fields, fieldList, cells) {
+    cellList = cells.ids.join("_");
+    let areas = [];
+
+    // Find the areas of the cells
+    cells.areas = [];
+    for (let cell=0; cell < cells.ids.length; cell++) {
+        let polygon = cells.bounds[cell].map(x => new google.maps.LatLng(x));
+        cells.areas[cell] = google.maps.geometry.spherical.computeArea(polygon);
+        console.log(cells.ids[cell] + " area = " + cells.areas[cell]);
+    }
+
+    // Find the cell/field intersections and their areas
+    $.ajax({
+        url:"intersect?cells=" + 
+            cellList 
+        ,
+        method: "POST",
+        data: "fields=" + fieldList,        
+        success:function(data){
+            let intersections = JSON.parse(data);
+            for (let b=0; b < fields.length; b++) {
+                areas[b] = [];
+                for (let cell=0; cell < cells.ids.length; cell++) {
+                    if (typeof intersections[cells.ids[cell]][b] === "undefined") {
+                        areas[b][cell] = 0;
+                    }
+                    else {
+                        let polygon = intersections[cells.ids[cell]][b].map(x => new google.maps.LatLng(x));
+                        areas[b][cell] = google.maps.geometry.spherical.computeArea(polygon);
+                    }
+                }
+            }
+            FindWeights(fields, fieldList, cells, areas);
+        },
+        error:function(jqXHR, textStatus, errorThrown) {
+            console.log('getJSON request failed! ' + textStatus);
+            console.log("incoming Text " + jqXHR.responseText);
+        }      
+    });
+}
+
+function FindWeights(fields, fieldList, cells, areas) {
+    // fields: [{name: string, mu: number}]
+    // cells: [string]
+    // areas: [[number]] indexed by [field][cell]
+    let count = []; // count of cells each field intersects
+    for (let i=0; i<areas.length; i++) {
+        count[i] = 0;
+        for (let j=0; j<areas[i].length; j++) {
+            if (areas[i][j] > 0) {
+                count[i]++;
+            }
+        }
+    }
+    //for (let i=0; i<fields.length; i++) {
+    //    console.log(fields[i].name + " " + count[i]);
+    //}
+    let range = {}; // range of weights for each cell
+    let solved = []; // fields that are computable from known cell MU values
+
+    for (let i=0; i<fields.length; i++) {
+        if (count[i] == 1) {
+            solved.push(i);
+            let cellIndex = 0;
+            for (let j=0; j<areas[i].length; j++) {
+                if (areas[i][j] > 0) {
+                    cellIndex = j;
+                }
+            }
+            let cell = cells.ids[cellIndex];
+            let percentOfCell = areas[i][cellIndex]/cells.areas[cellIndex];
+            console.log("field " + i  + " area = " + areas[i][cellIndex] + ", cell area = " + cells.areas[cellIndex] + ", percent of cell = " + percentOfCell);
+            // fieldMu = cellMu * percent
+            // cellMu = fieldMu / percent
+            let minMu = (fields[i].mu - 0.5)/percentOfCell; // Assuming rounding.  If this doesn't work, could be floor or ceil.
+            let maxMu = (fields[i].mu + 0.5)/percentOfCell;
+            console.log(cell + ": " + minMu + " - " + maxMu);
+            if (range.hasOwnProperty(cell)) {
+                // Further constrain the range with the data of this new field 
+                if (minMu > range[cell].min)
+                    range[cell].min = minMu;
+                if (maxMu < range[cell].max)
+                    range[cell].max = maxMu;
+                if (range[cell].min > range[cell].max) {
+                    console.log("NOPE.  Either there's bad data or the model is wrong.");
+                    // If the "they're 1km cells in the US" theory doesn't pan out
+                    /*
+                    $.ajax({
+                        url:"children?cell=" + cell,
+                        success:function(data){
+                            let newCells = JSON.parse(data);
+                            cells.ids.splice(cellIndex, 1, ...newCells.ids);
+                            cells.bounds.splice(cellIndex, 1, ...newCells.bounds);
+                            IntersectAndFindWeights(fields, fieldList, cells);
+                        },
+                        error:function(jqXHR, textStatus, errorThrown) {
+                            console.log('getJSON request failed! ' + textStatus);
+                            console.log("incoming Text " + jqXHR.responseText);
+                        }      
+                    });
+                    */
+                    return;
+                }
+            }
+            else {
+                range[cell] = {min: minMu, max: maxMu, cellIndex:cellIndex};
+            }
+        }
+    }
+    // maybe that special case for 1 will go away if the next step generalizes for 1
+    let foundOne = false;
+    do {
+        foundOne = false;
+        for (let i=0; i<fields.length; i++) {
+            if (solved.includes(i)) continue;
+            let unsolvedCount = 0;
+            let cellIndex; // cell index of the one unknown (if this field only has one remaining unknown cell MU value)
+            let minMu = 0; // How much of the MU can be accounted for by cells we have ranges for?
+            let maxMu = 0;
+            for (let j=0; j<areas[i].length; j++) {
+                if (areas[i][j] > 0) {
+                    if (range.hasOwnProperty(cells.ids[j])) {
+                        let percentOfCell = areas[i][j]/cells.areas[j];
+                        console.log("field " + i  + " area = " + areas[i][j] + ", cell area = " + cells.areas[j] + ", percent of cell = " + percentOfCell);
+                        console.log("cell " + cells.ids[j] + " ranges from " + range[cells.ids[j]].min + " to " + range[cells.ids[j]].max);
+                        console.log("contribution to field " + i + " MU (of " + fields[i].mu + ") is between " + range[cells.ids[j]].min*percentOfCell + " and " + range[cells.ids[j]].max*percentOfCell);
+                        minMu += range[cells.ids[j]].min * percentOfCell;
+                        maxMu += range[cells.ids[j]].max * percentOfCell;
+                        console.log("contribution of all cells so far is " + minMu + " - " + maxMu);
+                    }
+                    else {
+                        unsolvedCount++;
+                        cellIndex = j;
+                    }
+                }
+            }
+            if (unsolvedCount > 1) {
+                console.log("field " + i + " still has " + unsolvedCount + " unknown cells.  Try again later.");
+                continue;
+            }
+            if (unsolvedCount == 0) {
+                //debugger;
+                console.log("Field " + i + " is solved by previous fields");
+                //foundOne = true;
+                //solved.push(i);
+                //console.log("Solved: ");
+                //console.log(solved);
+                // Use this field's MU to further constrain the ranges on another field
+
+                // Which one has the biggest range
+                let biggestRange = -1;
+                for (let j=0; j<areas[i].length; j++) {
+                    if (areas[i][j] > 0) {
+                        let r = range[cells.ids[j]].max - range[cells.ids[j]].min;
+                        if (r > biggestRange) {
+                            cellIndex = j;
+                            biggestRange = r;
+                        }
+                    }
+                }
+                let percentOfCell = areas[i][cellIndex]/cells.areas[cellIndex];
+                minMu -= range[cells.ids[cellIndex]].min * percentOfCell;
+                maxMu -= range[cells.ids[cellIndex]].max * percentOfCell;     
+            }
+            console.log("Field " + i + " with " + fields[i].mu  + " MU can be solved");
+            console.log("Mu provided by other cells: " + minMu + " - " + maxMu);
+            foundOne = true;
+            solved.push(i);
+
+            let cell = cells.ids[cellIndex];
+
+            // Instead of this for min/max we need to solve by substitution
+            //let minWeight = areas[i][cellIndex]/(fields[i].mu + 0.5);
+            //let maxWeight = areas[i][cellIndex]/(fields[i].mu - 0.5);
+            //
+            // Like....
+            // fields[i].mu +/- 0.5 = sum of (area[i][cellJ]/{min or max for cellJ)
+            // so this cells area/{minmax} is the fieldMu - sum of other contributions
+            // minmax = area/(fieldMu - sum of other contributions)
+            //let maxWeight = areas[i][cellIndex]/(fields[i].mu - 0.5 - maxSum);
+            //let minWeight = areas[i][cellIndex]/(fields[i].mu + 0.5 - minSum);
+            // fields[i].mu - 0.5 - maxSum can be a negative number
+            // fields[i].mu - maxSum should be positive if there's a solution at this s2 level
+            // oh, maybe not
+            // but fields[i].mu - minSum should be positive if there's a solution
+            // if fields[i].mu - 0.5 - maxSum is negative, the other ranges can be narrowed
+            // but the max weight for this cell given the other ranges is...
+            // unbounded?
+            // It seems like the max weight would be if this were the only cell
+            // contributing.  If the field were entirely in this cell.
+            let maxCellMu;
+            let minCellMu;
+            // Is an impossibly large amount of MU being contributed by other cells? 
+            if (fields[i].mu + 0.5 < minMu) {
+                console.log("MU of field is " + (fields[i].mu - 0.5) + " - " + (fields[i].mu + 0.5) 
+                    + ", MU provided by other cells is " + minMu + " - " + maxMu);
+                console.log("No solution!  Bad data or the model is wrong " + cell);
+                /*
+                $.ajax({
+                    url:"children?cell=" + cell,
+                    success:function(data){
+                        let newCells = JSON.parse(data);
+                        cells.ids.splice(cellIndex, 1, ...newCells.ids);
+                        cells.bounds.splice(cellIndex, 1, ...newCells.bounds);
+                        IntersectAndFindWeights(fields, fieldList, cells);
+                    },
+                    error:function(jqXHR, textStatus, errorThrown) {
+                        console.log('getJSON request failed! ' + textStatus);
+                        console.log("incoming Text " + jqXHR.responseText);
+                    }      
+                });
+                */
+                return;
+            }
+            else {
+                let percentOfCell = areas[i][cellIndex]/cells.areas[cellIndex];
+                maxCellMu = (fields[i].mu + 0.5 - minMu)/percentOfCell;
+                minCellMu = Math.max(0,(fields[i].mu - 0.5 - maxMu)/percentOfCell);
+                console.log("Remaining MU of " + (fields[i].mu - 0.5 - maxMu) + " - " + (fields[i].mu + 0.5 - minMu) 
+                    + " over " + percentOfCell + " of cell area indicates cell MU is " + minCellMu + 
+                    " - " + maxCellMu);
+            }
+
+            console.log(cell + ": " + minCellMu + " - " + maxCellMu + "(by substitution)");
+            if (range.hasOwnProperty(cell)) {
+                // Further constrain the range with the data of this new field 
+                if (Math.max(minCellMu, range[cell].min) > Math.min(maxCellMu, range[cell].max)) {
+                    console.log("Math.max(minCellMu, range[cell].min) = Math.max(" 
+                        + minCellMu + ", " + range[cell].min + ")) = "
+                        + Math.max(minCellMu, range[cell].min));
+                    console.log("Math.min(maxCellMu, range[cell].max) = Math.min(" 
+                        + maxCellMu + ", " + range[cell].max + ")) = "
+                        + Math.min(maxCellMu, range[cell].max));
+
+                    //console.log("No solution!  BAD DATA or the model is wrong " + cell);
+
+                    // Given a cellid, what are the 4 cells in it?
+                    // xxx10000...0000 has children
+                    // xxx00100...0000
+                    // xxx01100...0000
+                    // xxx10100...0000
+                    // xxx11100...0000
+                    // but first we'd have to convert the cell tags into actual
+                    // 64 bit cell ids.  And javascript doesn't do that so it would
+                    // be two 32 bit numbers.  Let's not.
+                    // The only reason we're doing any of this on the client is to
+                    // use the google maps geometry area functions.  Surely there's
+                    // a C++ alternative.  But for now, we'll just ping pong
+                    // back and forth between client and server by adding an endpoint
+                    // to return the child cells of a cell.
+                    
+                    $.ajax({
+                        url:"children?cell=" + cell,
+                        success:function(data){
+                            let newCells = JSON.parse(data);
+                            cells.ids.splice(cellIndex, 1, ...newCells.ids);
+                            cells.bounds.splice(cellIndex, 1, ...newCells.bounds);
+                            IntersectAndFindWeights(fields, fieldList, cells);
+                        },
+                        error:function(jqXHR, textStatus, errorThrown) {
+                            console.log('getJSON request failed! ' + textStatus);
+                            console.log("incoming Text " + jqXHR.responseText);
+                        }      
+                    });
+                                            
+
+                    return;
+                }
+                if (minCellMu > range[cell].min)
+                    range[cell].min = minCellMu;
+                if (maxCellMu < range[cell].max)
+                    range[cell].max = maxCellMu;
+                console.log(cell + " is now " + range[cell].min + " - " + range[cell].max);
+            }
+            else {
+                range[cell] = {min: minCellMu, max: maxCellMu, cellIndex:cellIndex};
+                if (minCellMu > maxCellMu)
+                    debugger;
+            }
+        }
+    } while (foundOne);
+    
+    console.log(range);
+    let biggestRange = -1;
+    for (let ri in range) {
+        let r = range[ri].max - range[ri].min;
+        if (r > biggestRange) {
+            cell = ri;
+            biggestRange = r;
+        }
+    }
+    console.log("Biggest range");
+    console.log(cell);
+    console.log(range[cell]);
+    new google.maps.Polygon({
+            path:  cells.bounds[range[cell].cellIndex],
+            strokeColor: '#FF0000',
+            strokeOpacity: 0.5,
+            strokeWeight: 10,
+            fillOpacity: 0,
+            map: map
+        });    
+
+    let minMid = 99999;
+    let maxMid = -1;
+    for (let ri in range) {
+        if (range[ri].max - range[ri].min > 100) continue;
+        let mid = (range[ri].max + range[ri].min)/2;
+        range[ri].mid = mid;
+        if (mid < minMid) minMid = mid;
+        if (mid > maxMid) maxMid = mid;
+    }
+    for (let cell = 0; cell < cells.bounds.length; cell++) {
+        let id = cells.ids[cell];
+        if (!range.hasOwnProperty(id)) continue;
+        if (range[id].max - range[id].min > 100) continue;
+
+        let opacity = 0.8 - (range[id].mid - minMid)/(2*(maxMid - minMid));
+        new google.maps.Polygon({
+            path: cells.bounds[cell],
+            strokeColor: '#0000FF',
+            strokeOpacity: opacity,
+            strokeWeight: 1,
+            fillOpacity: opacity,
+            fillColor: '#0000FF',
+            map: map
+        });    
+    }
+
+    // Identify outliers
+    // fields = [{name: fieldGuid, mu: fieldMuData[fieldGuid]}]
+    let sum = 0;
+    let weights = [];
+    let usedPortals = {}; // Find data entry errors caused by picking the wrong portal when two have the same name
+    for (let field=0; field<fields.length; field++) {
+        let triangle = ParseFieldGuid(fields[field].name); 
+        let polygon = triangle.map(x => new google.maps.LatLng(x));
+        let area = google.maps.geometry.spherical.computeArea(polygon);
+        weights[field] = area/fields[field].mu;
+        sum = sum + weights[field];
+        /*
+        console.log(
+            triangle[0].title
+            + " - "
+            + triangle[1].title
+            + " - "
+            + triangle[2].title
+            + ": "
+            + area/fields[field].mu
+        );
+        */
+        usedPortals[triangle[0].guid] = triangle[0].title;
+        usedPortals[triangle[1].guid] = triangle[1].title;
+        usedPortals[triangle[2].guid] = triangle[2].title;
+    }
+    let mean = sum/fields.length;
+    console.log("Average weight: " + mean);
+    let sumSqDiff = 0;
+    for (let field=0; field<weights.length; field++) {
+        let diff = weights[field] - mean;
+        sumSqDiff += diff*diff;
+    }
+    let sd = Math.sqrt(sumSqDiff/(weights.length + 1));
+    console.log("Standard deviation: " + sd);
+    for (let field=0; field<fields.length; field++) {
+        if (weights[field] < mean - 3*sd || weights[field]> mean + 3*sd) {
+            let triangle = ParseFieldGuid(fields[field].name); 
+            console.log(
+                "Outlier! "
+                + triangle[0].title
+                + " - "
+                + triangle[1].title
+                + " - "
+                + triangle[2].title
+                + ": "
+                + weights[field]
+                + "  \"" 
+                + fields[field].name
+                + "\":"
+                + fields[field].mu
+            );
+        }
+    }
+    // Outliers
+    //"af8659d11caf4a8393dbd3053903933d_16___g3ecc732ebb6245b4beb45f00bb73529e_11___g77dfbe14227945f3935e26644688313f_16":5,
+    //"g1b58e2040b924089a07d99a3b5a2a740_16___g3fd4c9fb77b346c6beac67ed4385b727_16___g7a151ff4e30646a190aa99720b81eb96_16":192,
+    console.log("Portals used by name:");
+    let sortedPortals = Object.entries(usedPortals);
+    sortedPortals.sort(function(a, b){
+        if (a[1] < b[1]) return -1;
+        if (a[1] > b[1]) return 1;
+        return 0;}
+    );
+    console.log(sortedPortals);
+}
+
+function drawS2Grid() {
+    for (let i=0; i<s2polygons.length; i++){
+        s2polygons[i].setMap(null);
+    }
+    s2polygons = [];
+    for (let i=0;i<s2data.length;i++){
+        s2polygons.push(new google.maps.Polygon({
+            path: s2data[i].points,
+            strokeColor: '#0000FF',
+            strokeOpacity: 0.5,
+            strokeWeight: 1,
+            fillOpacity: 0,
+            map: map
+        }));
+    }
+    console.log("Cell count: " + s2data.length);
+    if (s2data.length < 100) {
+        for (let i=0;i<s2data.length;i++){
+            let lat = 0;
+            let lng = 0;
+            for (let point in s2data[i].points) {
+                lat += s2data[i].points[point].lat;
+                lng += s2data[i].points[point].lng;                
+            }
+            lat /= s2data[i].points.length;
+            lng /= s2data[i].points.length;
+            s2polygons.push(new google.maps.Marker({
+                position: new google.maps.LatLng(lat,lng),
+                map: map,
+                icon: "/images/transparent.png",
+                label: {
+                    text: s2data[i].name,
+                    color: "blue",
+                    fontWeight: "bold",
+                    fontSize: "16px"
+                }
+            }));
+        }
+    }
+}
+
+function refreshS2Grid(level) {
+    let bounds = map.getBounds();
+    let ne = bounds.getNorthEast();
+    let sw = bounds.getSouthWest();
+    let rectPoints = ne.lat().toString() + "," + ne.lng().toString()
+                + "_" + ne.lat().toString() + "," + sw.lng().toString()
+                + "_" + sw.lat().toString() + "," + ne.lng().toString()
+                + "_" + sw.lat().toString() + "," + sw.lng().toString();
+    $.ajax({
+        url:"cover?minLevel=" 
+            + level 
+            + "&maxLevel="
+            + level,
+        method: "POST",
+        data: "rectpoints=" + rectPoints,
+        success:function(data){
+            $("#s2cellLevel").val(level);
+            s2data = JSON.parse(data);
+            drawS2Grid();
+        },
+        error:function(jqXHR, textStatus, errorThrown) {
+            if (jqXHR.status == 403) {
+                // Clear the drawn cells
+                for (let i=0; i<s2polygons.length; i++){
+                    s2polygons[i].setMap(null);
+                }
+                s2polygons = [];
+                // Inform the user they're too zoomed out to draw the cells at the requested level
+                $("#s2cellLevel").val(level + " (zoom in)");
+            }
+            else {
+                console.log('getJSON request failed! ' + textStatus);
+                console.log("incoming Text " + jqXHR.responseText);
+            }
+        }      
+    });                         
+}
+
+function initializeMap()
+{
+    if (!mapInitialized)
+    {
+        // Default map options
+        var mapOptions = { center: new google.maps.LatLng(47.488451,-122.169666),
+                            zoom: 10,
+                            mapTypeId: google.maps.MapTypeId.ROADMAP };
+        
+        map = new google.maps.Map(document.getElementById("map_canvas"), mapOptions);
+        mapInitialized=true;
+                
+        $("#slider").slider({min:9, max:18, slide: function(event, ui) {
+            refreshS2Grid(ui.value);
+        }});
+        $("#s2cellLevel").val($("#slider").slider("value"));
+            
+        new google.maps.Polygon({
+            path: [{"lat":47.994058,"lng":-122.242468},{"lat":47.430873,"lng":-123.977276},{"lat":46.457519,"lng":-122.693956},{"lat":46.984342,"lng":-120.994610}],
+            strokeColor: '#0000FF',
+            strokeOpacity: 0.5,
+            strokeWeight: 1,
+            fillOpacity: 0,
+            map: map
+        });
+        
+
+        $.getJSON('portals.json', function (portalData) {
+            ignore = portalData.ignore;
+            portal = portalData.portals;
+            for (let i=0; i<portal.length; i++) {
+                portal[i].guid = SanitizeGuid(portal[i].guid);
+                let latlngArray = portal[i].latlng.split(',');
+                let lat = parseFloat(latlngArray[0]);
+                let lng = parseFloat(latlngArray[1]);
+                
+                portal[i].lat = lat;
+                portal[i].lng = lng;
+                let name = portal[i].title + " " + portal[i].latlng;
+                
+                let marker = new google.maps.Marker({
+                    position: new google.maps.LatLng(lat, lng),
+                    map: map,
+                    icon: {url: './images/hum_reso_08.png', 
+                        scaledSize: new google.maps.Size(20, 20), anchor: new google.maps.Point(10,10)},
+                    title: name
+                });
+            }
+
+
+            $.getJSON('fieldmu.json', function (fieldMuData) {
+    // From fieldmu.json, construct fields and fieldList
+    fields = [];
+    fieldList = "";
+    fieldDelimiter = "";
+    for (var fieldGuid in fieldMuData) {
+        if (fieldMuData.hasOwnProperty(fieldGuid)) {
+            fields.push({name: fieldGuid, mu: fieldMuData[fieldGuid]});
+            let triangle = ParseFieldGuid(fieldGuid); 
+            fieldList += fieldDelimiter;
+            fieldDelimiter = "+";
+            let portalDelimiter = "";
+            for (let i=0; i<3; i++) {
+                fieldList += portalDelimiter;
+                portalDelimiter = "_";
+                fieldList += triangle[i].latlng;
+            }
+        }
+    }
+    $.ajax({
+        url:"cover?minLevel=" 
+            + 13 
+            + "&maxLevel="
+            + 13,
+        method: "POST",
+        data: "fields=" + fieldList,
+        error:function(jqXHR, textStatus, errorThrown) {
+            if (jqXHR.status == 403) {
+                console.log("Too many fields to generate cover.");
+            }
+            else {
+                console.log('getJSON request failed! ' + textStatus);
+                console.log("incoming Text " + jqXHR.responseText);
+            }
+        },      
+        success:function(data){
+                cells = JSON.parse(data);
+                IntersectAndFindWeights(fields, fieldList, cells);
+            }
+    });
+})
+.fail(function(jqXHR, textStatus, errorThrown) { 
+    console.log('getJSON request failed! ' + textStatus); 
+    console.log("incoming Text " + jqXHR.responseText);
+});
+}); // portals.json
+
+        map.addListener('idle', function() {
+            refreshS2Grid($("#slider").slider("value"));
+        });        
+    } // not initialized.  should do an early out.
+} // initialize map
+
+</script>
+</head>
+
+<body>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+<link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css">
+<script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+<script>
+    $.getJSON('apikey.json', function (data) {
+        var s = document.createElement("script");
+        s.type = "text/javascript";
+        s.src = "http://maps.googleapis.com/maps/api/js?key=" + data.key + "&libraries=geometry&callback=initializeMap";
+        $("head").append(s);
+    })
+    .fail(function(jqXHR, textStatus, errorThrown) { 
+        console.log('getJSON request failed! ' + textStatus); 
+        console.log("incoming Text " + jqXHR.responseText);
+    });
+</script>
+<div class="container">
+    <div id="map_canvas"></div>
+    <div id="border"></div>
+    <div id="results"></div>
+    <p>
+        <label for = "s2cellLevel">S2 cell level:</label>
+         <input type = "text" id = "s2cellLevel"
+            style = "border:0; color:#b9cd6d; font-weight:bold;">
+    </p>
+    <div id="slider"></div>
+</div>
+</body>
+</html>
